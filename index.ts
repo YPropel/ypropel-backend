@@ -253,7 +253,7 @@ function authenticateToken(req: Request, res: Response, next: NextFunction): voi
   jwt.verify(token, JWT_SECRET, (err, decoded) => {
     if (err) {
       console.log("❌ JWT verification failed:", err.message);
-      return res.status(403).json({ error: "Invalid or expired token" });
+      return ;
     }
 
     console.log("✅ JWT verified. Decoded payload:", decoded);

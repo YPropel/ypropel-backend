@@ -11,6 +11,8 @@ import "./cronoldjobfairs";
 
 import { OAuth2Client } from "google-auth-library";
 
+import adminRoutes from "./adminbackend/BackendRoutes";
+
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 
@@ -47,6 +49,8 @@ declare global {
 
 const app = express();
 app.use(cors());
+
+
 
 import { v2 as cloudinary } from "cloudinary";
 import { CloudinaryStorage } from "multer-storage-cloudinary";

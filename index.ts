@@ -247,7 +247,7 @@ function authenticateToken(req: Request, res: Response, next: NextFunction): voi
 
   if (!token) {
     console.log("⚠️ No token found in Authorization header");
-    return res.status(401).json({ error: "No token provided" });
+    return ;
   }
 
   jwt.verify(token, JWT_SECRET, (err, decoded) => {

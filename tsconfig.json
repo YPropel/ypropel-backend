@@ -16,6 +16,6 @@
     "incremental": true,
     "types": ["node", "express"]
   },
-  "include": ["./**/*.ts"],
+  "include": ["./**/*.ts", "./custom.d.ts"],
   "exclude": ["node_modules", "dist"]
 }

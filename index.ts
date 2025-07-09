@@ -241,21 +241,25 @@ app.post(
 
 function authenticateToken(req: Request, res: Response, next: NextFunction): void {
   const authHeader = req.headers["authorization"];
+  console.log("🔥 Auth header:", authHeader);
+
   const token = authHeader?.split(" ")[1];
 
   if (!token) {
-    res.sendStatus(401);
-    return;
+    console.log("⚠️ No token found in Authorization header");
+    return res.status(401).json({ error: "No token provided" });
   }
 
-  jwt.verify(token, JWT_SECRET, (err, user) => {
+  jwt.verify(token, JWT_SECRET, (err, decoded) => {
     if (err) {
-      res.sendStatus(403);
-      return;
+      console.log("❌ JWT verification failed:", err.message);
+      return res.status(403).json({ error: "Invalid or expired token" });
     }
 
-    // Cast JWT payload
-    const payload = user as { userId: number; email?: string; is_admin?: boolean };
+    console.log("✅ JWT verified. Decoded payload:", decoded);
+
+    // Cast decoded payload
+    const payload = decoded as { userId: number; email?: string; is_admin?: boolean };
 
     req.user = {
       userId: payload.userId,
@@ -265,8 +269,7 @@ function authenticateToken(req: Request, res: Response, next: NextFunction): voi
 
     next();
   });
-} 
-
+}
 
 
 

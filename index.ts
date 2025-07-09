@@ -857,70 +857,51 @@ app.post(
 
 //----------------------------------------
 
-// PUT update user by ID (protected)
 app.put("/users/:id", authenticateToken, asyncHandler(async (req, res) => {
   const userId = Number(req.params.id);
-  const {
-    name,
-    email,
-    title,
-    university,
-    major,
-    experience_level,
-    skills,
-    company,
-    courses_completed,
-    country,
-    state,
-    city,
-    birthdate,
-    volunteering_work,
-    projects_completed,
-    photo_url,
-  } = req.body;
 
-  // Validate input if needed
+  // List all possible fields
+  const allowedFields = [
+    "name",
+    "email",
+    "title",
+    "university",
+    "major",
+    "experience_level",
+    "skills",
+    "company",
+    "courses_completed",
+    "country",
+    "state",
+    "city",
+    "birthdate",
+    "volunteering_work",
+    "projects_completed",
+    "photo_url",
+  ];
 
-  // Update query including new location fields
+  // Filter fields present in req.body
+  const fieldsToUpdate = allowedFields.filter(field => req.body[field] !== undefined);
+
+  if (fieldsToUpdate.length === 0) {
+    return res.status(400).json({ error: "No valid fields provided for update" });
+  }
+
+  // Build SET clause dynamically
+  const setClause = fieldsToUpdate
+    .map((field, idx) => `${field}=$${idx + 1}`)
+    .join(", ");
+
+  // Collect values in same order
+  const values = fieldsToUpdate.map(field => req.body[field]);
+
+  // Add userId as last parameter
+  values.push(userId);
+
+  // Execute dynamic query
   const result = await query(
-    `UPDATE users SET
-      name=$1,
-      email=$2,
-      title=$3,
-      university=$4,
-      major=$5,
-      experience_level=$6,
-      skills=$7,
-      company=$8,
-      courses_completed=$9,
-      country=$10,
-      state=$11,
-      city=$12,
-      birthdate=$13,
-      volunteering_work=$14,
-      projects_completed=$15,
-      photo_url=$16
-    WHERE id=$17
-    RETURNING *`,
-    [
-      name,
-      email,
-      title,
-      university,
-      major,
-      experience_level,
-      skills,
-      company,
-      courses_completed,
-      country,
-      state,
-      city,
-      birthdate,
-      volunteering_work,
-      projects_completed,
-      photo_url,
-      userId,
-    ]
+    `UPDATE users SET ${setClause} WHERE id=$${values.length} RETURNING *`,
+    values
   );
 
   if (result.rowCount === 0) {
@@ -929,6 +910,7 @@ app.put("/users/:id", authenticateToken, asyncHandler(async (req, res) => {
 
   res.json(result.rows[0]);
 }));
+
 
 // -------- Protected route to delete user profile ---------
 app.delete(

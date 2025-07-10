@@ -7,7 +7,7 @@ import jwt from "jsonwebtoken";
 import { query } from "./db";
 import multer from "multer";
 import path from "path";
-import "./cronoldjobfairs";
+//import "./cronoldjobfairs";
 
 import { OAuth2Client } from "google-auth-library";
 

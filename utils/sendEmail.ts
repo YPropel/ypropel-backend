@@ -10,7 +10,7 @@ const transporter = nodemailer.createTransport({
   },
 });
 
-export default async function sendEmail(to: string, subject: string, html: string) {
+export async function sendEmail(to: string, subject: string, html: string) {
   const mailOptions = {
     from: `"YPropel" <${process.env.EMAIL_USER}>`,
     to,

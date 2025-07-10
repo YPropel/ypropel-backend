@@ -13,6 +13,14 @@ import { OAuth2Client } from "google-auth-library";
 
 import adminRoutes from "./adminbackend/BackendRoutes";
 
+
+import { Pool } from "pg";
+
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL, // or your config
+  // other config options if needed
+});
+
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 
@@ -22,22 +30,6 @@ const multerMemoryStorage = multer.memoryStorage();
 const uploadMemory = multer({ storage: multerMemoryStorage });
 
 
-
-
-//import adminRoutes from "./adminbackend/BackendRoutes";  //calling Admin backend functions
-
-
-// ---before new edit profile
-/*declare global {
-  namespace Express {
-    interface Request {
-      userId?: number;
-      email?: string;
-      isAdmin?: boolean;
-      user?: { userId: number; email?: string };
-    }
-  }
-} */
 declare global {
   namespace Express {
     interface Request {
@@ -64,12 +56,25 @@ cloudinary.config({
 
 
 
-const storage = new CloudinaryStorage({
+/*const storage = new CloudinaryStorage({
   cloudinary,
   params: async (req, file) => ({
     folder: "ypropel-news", // ✅ Correct way to set folder
-    allowed_formats: ["jpg", "jpeg", "png"],
+   allowed_formats: ["jpg", "jpeg", "png", "mp4", "mov", "avi"], // added video formats
   }),
+});*/
+const storage = new CloudinaryStorage({
+  cloudinary,
+  params: async (req, file) => {
+    const isVideo = file.mimetype.startsWith("video/");
+    return {
+      folder: "ypropel-news",
+      resource_type: isVideo ? "video" : "image",
+      allowed_formats: isVideo
+        ? ["mp4", "mov", "avi", "webm", "mkv"]
+        : ["jpg", "jpeg", "png"],
+    };
+  },
 });
 
 
@@ -90,15 +95,8 @@ app.use(cors());
 app.use(express.json());
 app.use("/uploads", express.static("uploads"));
 
-// Async error wrapper for route handlers
-//function asyncHandler(
- //fn: (req: Request, res: Response, next: NextFunction) => Promise<any>//
-//) {//
-  //return (req: Request, res: Response, next: NextFunction) => {
-    //fn(req, res, next).catch(next);
-  //};
-//} //
-// Async error wrapper for route handlers
+
+
 function asyncHandler(
   fn: (req: Request, res: Response, next: NextFunction) => Promise<any>
 ) {
@@ -241,7 +239,7 @@ app.post(
 
 function authenticateToken(req: Request, res: Response, next: NextFunction): void {
   const authHeader = req.headers["authorization"];
-  console.log("🔥 Auth header:", authHeader);
+  //console.log("🔥 Auth header:", authHeader);
 
   const token = authHeader?.split(" ")[1];
 
@@ -256,7 +254,7 @@ function authenticateToken(req: Request, res: Response, next: NextFunction): voi
       return ;
     }
 
-    console.log("✅ JWT verified. Decoded payload:", decoded);
+    //console.log("✅ JWT verified. Decoded payload:", decoded);
 
     // Cast decoded payload
     const payload = decoded as { userId: number; email?: string; is_admin?: boolean };
@@ -272,77 +270,6 @@ function authenticateToken(req: Request, res: Response, next: NextFunction): voi
 }
 
 
-
-
-// ----------- AUTH ROUTES -----------
-//-- befre new edit profile we change here to assign random image as sign up
-/*async function signupHandler(req: Request, res: Response) {
-  const {
-    name,
-    email,
-    password,
-    title,
-    university,
-    major,
-    experience_level,
-    skills,
-    company,
-    courses_completed,
-    country,
-    birthdate,
-    volunteering_work,
-    projects_completed,
-    photo_url,
-  } = req.body;
-
-  if (!name || !email || !password) {
-    return res.status(400).json({ error: "Name, email, and password are required" });
-  }
-
-  try {
-    const existingUser = await query("SELECT * FROM users WHERE email = $1", [email]);
-    if (existingUser.rows.length > 0) {
-      return res.status(400).json({ error: "Email already registered" });
-    }
-
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    const result = await query(
-      `INSERT INTO users 
-      (name, email, password_hash, title, university, major, experience_level, skills, company, courses_completed, country, birthdate, volunteering_work, projects_completed, photo_url, created_at, updated_at)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15, NOW(), NOW())
-      RETURNING id, name, email, title, university, major, experience_level, skills, company, courses_completed, country, birthdate, volunteering_work, projects_completed, photo_url`,
-      [
-        name,
-        email,
-        hashedPassword,
-        title || null,
-        university || null,
-        major || null,
-        experience_level || null,
-        skills || null,
-        company || null,
-        courses_completed || null,
-        country || null,
-        birthdate || null,
-        volunteering_work || null,
-        projects_completed || null,
-        photo_url || null,
-      ]
-    );
-
-    const user = result.rows[0];
-
-    const token = jwt.sign({ userId: user.id, email: user.email }, JWT_SECRET, {
-      expiresIn: "7d",
-    });
-
-    res.status(201).json({ user, token });
-  } catch (error) {
-    console.error("Error signing up user:", error);
-    res.status(500).json({ error: (error as Error).message || "Unknown error" });
-  }
-} */
 const defaultProfilePhotos = [
   "https://res.cloudinary.com/denggbgma/image/upload/v<version>/ypropel-users/default-profile1.png",
 ];
@@ -474,7 +401,7 @@ app.get(
    
     
     const userId = req.user?.userId;
-    console.log("Decoded user ID in middleware:", userId);
+    //console.log("Decoded user ID in middleware:", userId);
 if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
 
@@ -586,6 +513,7 @@ if (!userId) return res.status(401).json({ error: "Unauthorized" });
   })
 );
 
+// -----POST create a new post
 // POST create a new post
 app.post(
   "/posts",
@@ -596,11 +524,8 @@ app.post(
   ]),
   asyncHandler(async (req: Request, res: Response) => {
     try {
-      
-      
-
-const userId = req.user?.userId;
-if (!userId) return res.status(401).json({ error: "Unauthorized" });
+      const userId = req.user?.userId;
+      if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
       const { content } = req.body;
 
@@ -608,14 +533,12 @@ if (!userId) return res.status(401).json({ error: "Unauthorized" });
       const imageFile = files?.image?.[0];
       const videoFile = files?.video?.[0];
 
-      const imageUrl = imageFile ? `/uploads/${imageFile.filename}` : null;
-      const videoUrl = videoFile ? `/uploads/${videoFile.filename}` : null;
+      // Log files nicely
+      //console.log("Image File:----->", JSON.stringify(imageFile, null, 2));
+      //console.log("Video File:----->", JSON.stringify(videoFile, null, 2));
 
-      console.log("📥 Received post:");
-      console.log("User ID:", userId);
-      console.log("Content:", content);
-      console.log("Image File:", imageFile);
-      console.log("Video File:", videoFile);
+      const imageUrl = imageFile ? imageFile.path : null;
+      const videoUrl = videoFile ? videoFile.path : null;
 
       if (!content && !imageFile && !videoFile) {
         console.error("⚠️ Post rejected: missing content and media.");
@@ -623,14 +546,13 @@ if (!userId) return res.status(401).json({ error: "Unauthorized" });
       }
 
       const result = await query(
-  `INSERT INTO posts (user_id, content, image_url, video_url, created_at)
-   VALUES ($1, $2, $3, $4, NOW())
-   RETURNING id, user_id AS authorId, content, image_url AS imageUrl, video_url AS videoUrl, created_at`,
-  [userId, content || "", imageUrl, videoUrl]
-);
+        `INSERT INTO posts (user_id, content, image_url, video_url, created_at)
+         VALUES ($1, $2, $3, $4, NOW())
+         RETURNING id, user_id AS authorId, content, image_url AS imageUrl, video_url AS videoUrl, created_at`,
+        [userId, content || "", imageUrl, videoUrl]
+      );
 
-
-      console.log("✅ Post inserted:", result.rows[0]);
+      //console.log("✅ Post inserted:", result.rows[0]);
       res.status(201).json(result.rows[0]);
     } catch (error) {
       console.error("❌ Error inserting post:", error);
@@ -639,14 +561,16 @@ if (!userId) return res.status(401).json({ error: "Unauthorized" });
   })
 );
 
-// PUT update a post by ID (protected)
+
+//----- PUT update a post by ID (protected)
 app.put(
   "/posts/:postId",
   authenticateToken,
   asyncHandler(async (req: Request, res: Response) => {
     const postId = parseInt(req.params.postId, 10);
     const {  content, imageUrl, videoUrl } = req.body;
-   
+ 
+
     const userId = req.user?.userId;
 if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
@@ -845,7 +769,8 @@ app.post(
     console.dir(req.file, { depth: null });
 
     // ✅ Use `path` instead of `secure_url`
-    res.status(200).json({ imageUrl: req.file.path });
+   res.status(200).json({ imageUrl: req.file.path }); // currently only returns path? Need secure_url instead
+
   })
 );
 
@@ -854,19 +779,21 @@ app.post(
 
 
 
-
-//----------------------------------------
+//-------Edit My profile routes-------------
+//---------------Routes to display majors in dropdown in edit profile-------------------------
 
 app.put("/users/:id", authenticateToken, asyncHandler(async (req, res) => {
   const userId = Number(req.params.id);
 
-  // List all possible fields
+  // List all possible fields, adding major_id and major_other
   const allowedFields = [
     "name",
     "email",
     "title",
     "university",
-    "major",
+    "major", // keep for legacy, but ideally avoid updating this
+    "major_id",
+    "major_other",
     "experience_level",
     "skills",
     "company",
@@ -879,6 +806,17 @@ app.put("/users/:id", authenticateToken, asyncHandler(async (req, res) => {
     "projects_completed",
     "photo_url",
   ];
+
+  // Validate major_id if provided
+  if (req.body.major_id !== undefined && req.body.major_id !== null) {
+    const majorCheck = await query(
+      "SELECT id FROM standard_majors WHERE id = $1",
+      [req.body.major_id]
+    );
+    if (majorCheck.rowCount === 0) {
+      return res.status(400).json({ error: "Invalid major_id" });
+    }
+  }
 
   // Filter fields present in req.body
   const fieldsToUpdate = allowedFields.filter(field => req.body[field] !== undefined);
@@ -910,6 +848,67 @@ app.put("/users/:id", authenticateToken, asyncHandler(async (req, res) => {
 
   res.json(result.rows[0]);
 }));
+
+// GET /standard_majors - fetch all standard majors
+app.get("/standard_majors", asyncHandler(async (req, res) => {
+  const result = await query("SELECT id, name FROM standard_majors ORDER BY name ASC");
+  res.json(result.rows);
+}));
+
+//----insert new  majors added by users in pending majors to approve
+app.post("/pending_majors", authenticateToken, asyncHandler(async (req, res) => {
+  const userId = req.user?.userId;
+  if (!userId) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  const { name } = req.body;
+
+  if (!name || name.trim() === "") {
+    return res.status(400).json({ error: "Major name is required" });
+  }
+
+  const existingStandard = await query(
+    `SELECT id FROM standard_majors WHERE LOWER(name) = LOWER($1)`,
+    [name.trim()]
+  );
+
+  if (existingStandard?.rowCount && existingStandard.rowCount > 0) {
+    return res.status(400).json({ error: "Major already exists" });
+  }
+
+  const existingPending = await query(
+    `SELECT id FROM pending_majors WHERE LOWER(name) = LOWER($1)`,
+    [name.trim()]
+  );
+
+  if (existingPending?.rowCount && existingPending.rowCount > 0) {
+    return res.status(400).json({ error: "Major already submitted and pending approval" });
+  }
+
+  const result = await query(
+    `INSERT INTO pending_majors (name, submitted_by) VALUES ($1, $2) RETURNING *`,
+    [name.trim(), userId]
+  );
+
+  res.status(201).json(result.rows[0]);
+}));
+
+//-----Routes to get experience level for drop down in edite profile
+
+
+// GET all standard experience levels
+app.get(
+  "/standard_experience_levels",
+  asyncHandler(async (req, res) => {
+    const result = await query(
+      `SELECT id, level_name FROM standard_experience_levels ORDER BY id`
+    );
+    res.json(result.rows);
+  })
+);
+
+
+//--------------------
 
 
 // -------- Protected route to delete user profile ---------
@@ -1549,7 +1548,7 @@ app.post(
 
     // ✅ Auto-add the creator
     await query("INSERT INTO study_circle_members (circle_id, user_id) VALUES ($1, $2)", [circleId, userId]);
-    console.log("👤 Creator added as member");
+    //console.log("👤 Creator added as member");
 
     // ✅ Add additional members if any
     if (Array.isArray(members) && members.length > 0) {
@@ -2205,7 +2204,7 @@ app.post(
 
 
 //-------------------Universities ---------------------------------------
-// get universities list to public 
+//------- get universities list to public 
 app.get("/api/universities", async (req, res) => {
   try {
     const limit = parseInt(req.query.limit as string) || 100;
@@ -2238,6 +2237,61 @@ app.get("/api/universities", async (req, res) => {
     res.status(500).json({ error: "Failed to fetch universities" });
   }
 });
+//-- Create routes to search universities by name & description
+app.get("/api/universities/search", async (req, res) => {
+  console.log("Search universities route hit");
+  try {
+    const limit = parseInt(req.query.limit as string) || 100;
+    const offset = parseInt(req.query.offset as string) || 0;
+    const state = req.query.state as string | undefined;
+    const name = (req.query.name as string | undefined)?.trim();
+    const knownFor = (req.query.known_for as string | undefined)?.trim();
+
+    let baseQuery = `
+      SELECT id, title, website, description, country, state, city
+      FROM universities
+      WHERE 1=1
+    `;
+
+    const params: any[] = [];
+    let paramIndex = 1;
+
+    if (state && state !== "") {
+      baseQuery += ` AND state = $${paramIndex++}`;
+      params.push(state);
+    }
+    if (name && name !== "") {
+      baseQuery += ` AND LOWER(title) LIKE LOWER($${paramIndex++})`;
+      params.push(`%${name}%`);
+    }
+    if (knownFor && knownFor !== "") {
+      baseQuery += ` AND LOWER(description) LIKE LOWER($${paramIndex++})`;
+      params.push(`%${knownFor}%`);
+    }
+
+    // Count total matching rows for pagination
+    const countQuery = `SELECT COUNT(*) FROM (${baseQuery}) AS sub`;
+    const countResult = await pool.query(countQuery, params);
+    const totalCount = parseInt(countResult.rows[0].count, 10);
+
+    baseQuery += ` ORDER BY title ASC LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
+    params.push(limit, offset);
+
+    const dataResult = await pool.query(baseQuery, params);
+
+    res.json({
+      totalCount,
+      universities: dataResult.rows,
+    });
+  } catch (error) {
+    console.error("Error fetching universities (search):", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+
+
+//----------------------------
 
 //-------------------trade schools ---------------------------------------
 // get schools list to public 

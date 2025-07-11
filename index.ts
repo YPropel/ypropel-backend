@@ -2002,7 +2002,7 @@ app.get(
   asyncHandler(async (req, res) => {
     const videosRes = await query(`
       SELECT 
-        v.id, 
+        v.id,
         v.user_id,
         v.title,
         v.description,

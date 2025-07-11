@@ -2035,10 +2035,15 @@ app.post(
   authenticateToken,
   asyncHandler(async (req, res) => {
     const { title, description, video_url, category } = req.body;
-    const userId = (req as any).user.id;
+    const userId = req.user?.userId;
 
     if (!title || !video_url) {
       res.status(400).json({ error: "Title and video_url are required" });
+      return;
+    }
+
+    if (!userId) {
+      res.status(401).json({ error: "Unauthorized" });
       return;
     }
 
@@ -2051,6 +2056,7 @@ app.post(
     res.status(201).json(insertRes.rows[0]);
   })
 );
+
 
 
 // POST /api/videos/:id/like - toggle like

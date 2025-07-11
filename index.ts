@@ -2220,8 +2220,8 @@ app.delete(
   authenticateToken,
   asyncHandler(async (req, res) => {
     const videoId = parseInt(req.params.id);
-    const userId = (req as any).user.id;
-
+    //const userId = (req as any).user.id;
+const userId = req.user?.userId;
     // Verify video exists and is owned by user
     const videoRes = await query("SELECT user_id FROM pitchpoint_videos WHERE id = $1", [videoId]);
     if (videoRes.rowCount === 0) {

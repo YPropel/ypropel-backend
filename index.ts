@@ -2782,6 +2782,11 @@ app.delete("/admin/news/:id", authenticateToken, asyncHandler(async (req, res) =
 //------------Pre college summer programs Admin routes------------
 //----Add pre-college-summer program by Admin---
 // Admin-only: Add a new summer program
+app.get("/admin/test", (req, res) => {
+  res.json({ msg: "Admin routes are working!" });
+});
+
+
 app.post("/admin/summer-programs", async (req: Request, res: Response) => {
   const {
     title,

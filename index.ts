@@ -3586,6 +3586,10 @@ app.post(
   })
 );
 
+
+//----- importentry level jobs route-(main route code is in AdminRoutes.tsx-
+app.use("/admin", adminRoutes);
+
 //--------Add added articles lists to admin page so they can edit and delete
 /* before edit  new profile 
 app.put(

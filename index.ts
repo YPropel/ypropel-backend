@@ -7,6 +7,8 @@ import jwt from "jsonwebtoken";
 import { query } from "./db";
 import multer from "multer";
 import path from "path";
+import adminBackendRouter from "./adminbackend"; // Adjust the path if needed
+
 //import "./cronoldjobfairs";
 
 import { OAuth2Client } from "google-auth-library";
@@ -2784,9 +2786,7 @@ app.delete("/admin/news/:id", authenticateToken, asyncHandler(async (req, res) =
 //------------Pre college summer programs Admin routes------------
 //----Add pre-college-summer program by Admin---
 // Admin-only: Add a new summer program
-app.get("/admin/test", (req, res) => {
-  res.json({ msg: "Admin routes are working!" });
-});
+
 
 
 app.post("/admin/summer-programs", async (req: Request, res: Response) => {
@@ -3591,6 +3591,7 @@ app.post(
 
 //----- importentry level jobs route-(main route code is in AdminRoutes.tsx-
 app.use("/admin", adminRoutes);
+app.use("/adminbackend", adminBackendRouter);
 
 // Use those routes under a path, for example "/admin/import-jobs"
 app.use("/admin/import-jobs", importJobsRoutes);
@@ -3659,28 +3660,7 @@ app.put(
   })
 );
 
-//-----Allow admin delete articles 
-/* before eedit new profile---
-app.delete(
-  "/admin/articles/:id",
-  authenticateToken,
-  asyncHandler(async (req: Request, res: Response) => {
-    const articleId = parseInt(req.params.id);
-    if (isNaN(articleId)) {
-      return res.status(400).json({ error: "Invalid article ID" });
-    }
 
-    const token = req.headers.authorization?.split(" ")[1];
-    if (!token) return res.status(401).json({ error: "Unauthorized" });
-
-    const decoded: any = jwt.verify(token, JWT_SECRET as string);
-    if (!decoded.is_admin) return res.status(403).json({ error: "Admins only" });
-
-    await query("DELETE FROM articles WHERE id = $1", [articleId]);
-
-    res.json({ message: "✅ Article deleted successfully" });
-  })
-); */
 app.delete(
   "/admin/articles/:id",
   authenticateToken,

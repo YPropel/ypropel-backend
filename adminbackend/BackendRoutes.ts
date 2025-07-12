@@ -6,7 +6,11 @@ import { query } from "../db";
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || "your_jwt_secret_key";
 
-// Async wrapper
+interface AuthRequest extends Request {
+  user?: { userId: number; email?: string; isAdmin?: boolean };
+}
+
+// Async wrapper to catch errors
 function asyncHandler(
   fn: (req: Request, res: Response, next: NextFunction) => Promise<any>
 ) {
@@ -15,8 +19,8 @@ function asyncHandler(
   };
 }
 
-// Authentication middleware (already in your file)
-function authenticateToken(req: Request, res: Response, next: NextFunction): void {
+// Authentication middleware
+function authenticateToken(req: AuthRequest, res: Response, next: NextFunction): void {
   const authHeader = req.headers["authorization"];
   const token = authHeader?.split(" ")[1];
 
@@ -43,19 +47,23 @@ function authenticateToken(req: Request, res: Response, next: NextFunction): voi
   });
 }
 
-// Protect all admin routes with authentication middleware
+// Admin-only middleware with correct void return type
+function adminOnly(req: AuthRequest, res: Response, next: NextFunction): void {
+  if (!req.user?.isAdmin) {
+    res.status(403).json({ error: "Access denied. Admins only." });
+    return; // return void here, not the response object
+  }
+  next();
+}
+
+// Protect all routes below this middleware with authentication
 router.use(authenticateToken);
 
-// Existing DELETE /news/:id route here...
-
-// New POST /admin/import-entry-jobs route
+// Admin-only import entry-level jobs route
 router.post(
   "/admin/import-entry-jobs",
-  asyncHandler(async (req: Request, res: Response) => {
-    if (!req.user?.isAdmin) {
-      return res.status(403).json({ error: "Access denied. Admins only." });
-    }
-
+  adminOnly,
+  asyncHandler(async (req: AuthRequest, res: Response) => {
     const ADZUNA_APP_ID = process.env.ADZUNA_APP_ID!;
     const ADZUNA_APP_KEY = process.env.ADZUNA_APP_KEY!;
     const ADZUNA_COUNTRY = "us";

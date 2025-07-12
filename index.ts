@@ -12,6 +12,8 @@ import path from "path";
 import { OAuth2Client } from "google-auth-library";
 
 import adminRoutes from "./adminbackend/BackendRoutes";
+// Import the job import routes from adminbackend/index.ts
+import importJobsRoutes from "./adminbackend/index";
 
 
 import { Pool } from "pg";
@@ -3589,6 +3591,9 @@ app.post(
 
 //----- importentry level jobs route-(main route code is in AdminRoutes.tsx-
 app.use("/admin", adminRoutes);
+
+// Use those routes under a path, for example "/admin/import-jobs"
+app.use("/admin/import-jobs", importJobsRoutes);
 
 //--------Add added articles lists to admin page so they can edit and delete
 /* before edit  new profile 

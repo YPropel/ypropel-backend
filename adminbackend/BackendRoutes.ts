@@ -12,26 +12,30 @@ interface AuthRequest extends Request {
 
 // Async wrapper to catch errors
 function asyncHandler(
-  fn: (req: Request, res: Response, next: NextFunction) => Promise<any>
+  fn: (req: AuthRequest, res: Response, next: NextFunction) => Promise<any>
 ) {
-  return function (req: Request, res: Response, next: NextFunction) {
+  return function (req: AuthRequest, res: Response, next: NextFunction) {
     fn(req, res, next).catch(next);
   };
 }
 
 // Authentication middleware
-function authenticateToken(req: AuthRequest, res: Response, next: NextFunction): void {
+function authenticateToken(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+): void {
   const authHeader = req.headers["authorization"];
   const token = authHeader?.split(" ")[1];
 
   if (!token) {
-    res.sendStatus(401);
+    res.status(401).json({ error: "Unauthorized: No token provided" });
     return;
   }
 
   jwt.verify(token, JWT_SECRET, (err, user) => {
     if (err) {
-      res.sendStatus(403);
+      res.status(403).json({ error: "Forbidden: Invalid token" });
       return;
     }
 
@@ -47,11 +51,11 @@ function authenticateToken(req: AuthRequest, res: Response, next: NextFunction):
   });
 }
 
-// Admin-only middleware with correct void return type
+// Admin-only middleware (returns void)
 function adminOnly(req: AuthRequest, res: Response, next: NextFunction): void {
   if (!req.user?.isAdmin) {
     res.status(403).json({ error: "Access denied. Admins only." });
-    return; // return void here, not the response object
+    return; // just return void here, no returning res
   }
   next();
 }
@@ -61,7 +65,7 @@ router.use(authenticateToken);
 
 // Admin-only import entry-level jobs route
 router.post(
-  "/adminbackend/import-entry-jobs",
+  "/import-entry-jobs",
   adminOnly,
   asyncHandler(async (req: AuthRequest, res: Response) => {
     const ADZUNA_APP_ID = process.env.ADZUNA_APP_ID!;

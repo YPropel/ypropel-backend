@@ -61,7 +61,7 @@ router.use(authenticateToken);
 
 // Admin-only import entry-level jobs route
 router.post(
-  "/admin/import-entry-jobs",
+  "/adminbackend/import-entry-jobs",
   adminOnly,
   asyncHandler(async (req: AuthRequest, res: Response) => {
     const ADZUNA_APP_ID = process.env.ADZUNA_APP_ID!;

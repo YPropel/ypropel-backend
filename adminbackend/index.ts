@@ -1,5 +1,3 @@
-//--- this file handles backend routes for import jobs the aggregator
-
 import { Router, Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import { query } from "../db";
@@ -53,7 +51,7 @@ function authenticateToken(req: AuthRequest, res: Response, next: NextFunction):
 function adminOnly(req: AuthRequest, res: Response, next: NextFunction): void {
   if (!req.user?.isAdmin) {
     res.status(403).json({ error: "Access denied. Admins only." });
-    return;  // return void here
+    return; // return void here
   }
   next();
 }

@@ -167,3 +167,5 @@ router.post(
     res.json({ success: true, inserted: insertedCount });
   })
 );
+// at the end of adminbackend/BackendRoutes.ts
+export default router;

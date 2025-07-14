@@ -55,7 +55,7 @@ function authenticateToken(
 function adminOnly(req: AuthRequest, res: Response, next: NextFunction): void {
   if (!req.user?.isAdmin) {
     res.status(403).json({ error: "Access denied. Admins only." });
-    return; // just return void here, no returning res
+    return;
   }
   next();
 }
@@ -74,17 +74,6 @@ router.post(
 
     const { keyword = "", location = "", page = 1 } = req.body;
 
-    const includeKeywords = [
-      "product manager",
-      "software engineer",
-      "data scientist",
-      "data analyst",
-      "developer",
-      "business analyst",
-      "product owner",
-      "machine learning engineer",
-      "ux designer",
-    ];
     const excludeKeywords = [
       "cook",
       "customer support",
@@ -97,7 +86,7 @@ router.post(
     function isValidJobTitle(title: string): boolean {
       const lowerTitle = title.toLowerCase();
       if (excludeKeywords.some((kw) => lowerTitle.includes(kw))) return false;
-      return includeKeywords.some((kw) => lowerTitle.includes(kw));
+      return true;
     }
 
     console.log(`Starting import with keyword='${keyword}', location='${location}', page=${page}`);
@@ -167,5 +156,5 @@ router.post(
     res.json({ success: true, inserted: insertedCount });
   })
 );
-// at the end of adminbackend/BackendRoutes.ts
+
 export default router;

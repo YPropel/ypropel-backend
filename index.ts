@@ -7,6 +7,7 @@ import jwt from "jsonwebtoken";
 import { query } from "./db";
 import multer from "multer";
 import path from "path";
+
 //import adminBackendRouter from "./adminbackend"; // This imports from adminbackend/in
 //import "./cronoldjobfairs";
 import adminRoutes from "./adminbackend/BackendRoutes"; //--adminbackendroute
@@ -45,6 +46,7 @@ declare global {
 
 const app = express();
 app.use(cors());
+app.use(express.json()); 
 
 app.use("/admin", adminRoutes); //--adminbackendroute
 

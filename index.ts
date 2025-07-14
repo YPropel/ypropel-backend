@@ -3592,10 +3592,20 @@ app.post(
 app.use("/admin", adminBackendRouter);
 
 app._router.stack.forEach(function(r){
-  if (r.route && r.route.path){
-    console.log('Registered route:', r.route.path)
+ console.log("Registered routes:");
+app._router.stack.forEach((middleware) => {
+  if (middleware.route) {
+    // routes registered directly on the app
+    console.log(middleware.route.path);
+  } else if (middleware.name === 'router') {
+    // router middleware 
+    middleware.handle.stack.forEach((handler) => {
+      const route = handler.route;
+      route && console.log(route.path);
+    });
   }
-})
+});
+
 
 //--------Add added articles lists to admin page so they can edit and delete
 /* before edit  new profile 

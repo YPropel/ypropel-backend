@@ -7,8 +7,7 @@ import jwt from "jsonwebtoken";
 import { query } from "./db";
 import multer from "multer";
 import path from "path";
-import adminBackendRouter from "./adminbackend"; // Adjust the path if needed
-
+import adminBackendRouter from "./adminbackend"; // This imports from adminbackend/in
 //import "./cronoldjobfairs";
 
 import { OAuth2Client } from "google-auth-library";
@@ -3590,8 +3589,7 @@ app.post(
 
 
 //----- importentry level jobs route-(main route code is in AdminRoutes.tsx-
-app.use("/admin", adminRoutes);
-app.use("/adminbackend", adminBackendRouter);
+app.use("/admin", adminBackendRouter);
 
 // Use those routes under a path, for example "/admin/import-jobs"
 app.use("/admin/import-jobs", importJobsRoutes);

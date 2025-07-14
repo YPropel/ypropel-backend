@@ -63,9 +63,7 @@ function adminOnly(req: AuthRequest, res: Response, next: NextFunction): void {
 // Protect all routes below this middleware with authentication
 router.use(authenticateToken);
 
-// --------------------
-// Adzuna import route
-// --------------------
+// === Adzuna Import Route ===
 router.post(
   "/import-entry-jobs",
   adminOnly,
@@ -87,7 +85,6 @@ router.post(
       "shift supervisor",
       "supervisor",
       "janitor",
-      // Add more roles to exclude as needed
     ];
 
     function isValidJobTitle(title: string): boolean {
@@ -163,15 +160,12 @@ router.post(
   })
 );
 
-// -------------------------
-// Careerjet import route
-// -------------------------
+// === Careerjet Import Route ===
 router.post(
   "/import-careerjet-jobs",
   adminOnly,
   asyncHandler(async (req: AuthRequest, res: Response) => {
-    const CAREERJET_AFFILIATE_ID = "0f0ecfc3795d3880bf5acfb02742b000"; // Your affiliate ID
-
+    const CAREERJET_AFFID = process.env.CAREERJET_AFFID!;
     const { keyword = "", location = "", pages = 3 } = req.body;
 
     const excludeKeywords = [
@@ -185,7 +179,6 @@ router.post(
       "shift supervisor",
       "supervisor",
       "janitor",
-      // add more exclusions as needed
     ];
 
     function isValidJobTitle(title: string): boolean {
@@ -198,61 +191,69 @@ router.post(
     for (let page = 1; page <= pages; page++) {
       console.log(`Fetching Careerjet page ${page}...`);
 
-      // Careerjet public API URL
-      const careerjetUrl = `https://public.api.careerjet.net/search?affid=${CAREERJET_AFFILIATE_ID}&keywords=${encodeURIComponent(keyword)}&location=${encodeURIComponent(location)}&pagesize=50&pagenumber=${page}&sort=relevance`;
+      // Build the Careerjet API URL
+      const careerjetUrl = `https://public.api.careerjet.net/search?affid=${CAREERJET_AFFID}&keywords=${encodeURIComponent(keyword)}&location=${encodeURIComponent(location)}&pagesize=50&page=${page}`;
 
+      let response;
       try {
-        const response = await axios.get(careerjetUrl);
-        const jobs = response.data.jobs || [];
-        console.log(`Fetched ${jobs.length} jobs from Careerjet.`);
-
-        for (const job of jobs) {
-          if (!job.title || !isValidJobTitle(job.title)) {
-            console.log(`Skipped job due to invalid title: ${job.title}`);
-            continue;
-          }
-
-          const existing = await query(
-            "SELECT id FROM jobs WHERE title = $1 AND company = $2 AND location = $3",
-            [job.title, job.company || null, job.locations || null]
-          );
-
-          if (existing.rows.length > 0) {
-            console.log(`Job already exists: ${job.title} at ${job.company}`);
-            continue;
-          }
-
-          try {
-            await query(
-              `INSERT INTO jobs (
-                title, description, category, company, location, requirements,
-                apply_url, posted_at, is_active, job_type, country, state, city
-              ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
-              [
-                job.title,
-                job.description || null,
-                null,
-                job.company || null,
-                job.locations || null,
-                null,
-                job.url || null,
-                job.date_created || new Date().toISOString(),
-                true,
-                "entry_level",
-                null,
-                null,
-                null,
-              ]
-            );
-            insertedCount++;
-            console.log(`Inserted job: ${job.title}`);
-          } catch (error) {
-            console.error(`Error inserting job ${job.title}:`, error);
-          }
-        }
+        response = await axios.get(careerjetUrl);
       } catch (error) {
         console.error(`Error fetching Careerjet page ${page}:`, error);
-        break;
+        continue; // skip to next page
+      }
+
+      const results = response.data;
+
+      console.log("Careerjet API raw results:", JSON.stringify(results, null, 2));
+
+      if (!results || !results.jobs || results.jobs.length === 0) {
+        console.log(`No jobs found on Careerjet page ${page}`);
+        continue;
+      }
+
+      for (const job of results.jobs) {
+        if (!job.title || !isValidJobTitle(job.title)) {
+          console.log(`Skipped job due to invalid title: ${job.title}`);
+          continue;
+        }
+
+        const existing = await query(
+          "SELECT id FROM jobs WHERE title = $1 AND company = $2 AND location = $3",
+          [job.title, job.company || null, job.locations || null]
+        );
+
+        if (existing.rows.length > 0) {
+          console.log(`Job already exists: ${job.title} at ${job.company}`);
+          continue;
+        }
+
+        try {
+          await query(
+            `INSERT INTO jobs (
+              title, description, category, company, location, requirements,
+              apply_url, posted_at, is_active, job_type, country, state, city
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+            [
+              job.title,
+              job.description || null,
+              null,
+              job.company || null,
+              job.locations || null,
+              null,
+              job.url || null,
+              job.date || new Date().toISOString(),
+              true,
+              "entry_level",
+              null,
+              null,
+              null,
+            ]
+          );
+          insertedCount++;
+          console.log(`Inserted job: ${job.title}`);
+        } catch (error) {
+          console.error(`Error inserting job ${job.title}:`, error);
+        }
       }
     }
 

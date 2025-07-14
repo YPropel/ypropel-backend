@@ -3591,8 +3591,7 @@ app.post(
 //----- importentry level jobs route-(main route code is in AdminRoutes.tsx-
 app.use("/admin", adminBackendRouter);
 
-// Use those routes under a path, for example "/admin/import-jobs"
-app.use("/admin/import-jobs", importJobsRoutes);
+
 
 //--------Add added articles lists to admin page so they can edit and delete
 /* before edit  new profile 

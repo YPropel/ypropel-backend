@@ -51,7 +51,7 @@ function authenticateToken(
   });
 }
 
-// Admin-only middleware (returns void)
+// Admin-only middleware
 function adminOnly(req: AuthRequest, res: Response, next: NextFunction): void {
   if (!req.user?.isAdmin) {
     res.status(403).json({ error: "Access denied. Admins only." });
@@ -72,7 +72,7 @@ router.post(
     const ADZUNA_APP_KEY = process.env.ADZUNA_APP_KEY!;
     const ADZUNA_COUNTRY = "us";
 
-    const { keyword = "", location = "", page = 1 } = req.body;
+    const { keyword = "", location = "", pages = 3 } = req.body; // default 3 pages
 
     const excludeKeywords = [
       "cook",
@@ -81,73 +81,77 @@ router.post(
       "cashier",
       "driver",
       "security",
+      "hourly",
+      "shift supervisor",
+      "supervisor",
+      "janitor",
+      // Add more roles to exclude as needed
     ];
 
     function isValidJobTitle(title: string): boolean {
       const lowerTitle = title.toLowerCase();
-      if (excludeKeywords.some((kw) => lowerTitle.includes(kw))) return false;
-      return true;
+      return !excludeKeywords.some((kw) => lowerTitle.includes(kw));
     }
-
-    console.log(`Starting import with keyword='${keyword}', location='${location}', page=${page}`);
-
-    const adzunaUrl = `https://api.adzuna.com/v1/api/jobs/${ADZUNA_COUNTRY}/search/${page}?app_id=${ADZUNA_APP_ID}&app_key=${ADZUNA_APP_KEY}&results_per_page=50&max_days_old=30&content-type=application/json${keyword ? `&what=${encodeURIComponent(keyword)}` : ""}${location ? `&where=${encodeURIComponent(location)}` : ""}`;
-
-    const response = await axios.get(adzunaUrl);
-    const jobs = response.data.results;
-    console.log(`Fetched ${jobs.length} jobs from Adzuna.`);
 
     let insertedCount = 0;
 
-    for (const job of jobs) {
-      console.log(`Processing job: ${job.title}`);
+    for (let page = 1; page <= pages; page++) {
+      console.log(`Fetching page ${page}...`);
 
-      if (!job.title || !isValidJobTitle(job.title)) {
-        console.log(`Skipped job due to invalid title: ${job.title}`);
-        continue;
-      }
+      const adzunaUrl = `https://api.adzuna.com/v1/api/jobs/${ADZUNA_COUNTRY}/search/${page}?app_id=${ADZUNA_APP_ID}&app_key=${ADZUNA_APP_KEY}&results_per_page=50&max_days_old=30&content-type=application/json${keyword ? `&what=${encodeURIComponent(keyword)}` : ""}${location ? `&where=${encodeURIComponent(location)}` : ""}`;
 
-      const existing = await query(
-        "SELECT id FROM jobs WHERE title = $1 AND company = $2 AND location = $3",
-        [job.title, job.company?.display_name || null, job.location?.display_name || null]
-      );
+      const response = await axios.get(adzunaUrl);
+      const jobs = response.data.results;
+      console.log(`Fetched ${jobs.length} jobs from Adzuna.`);
 
-      if (existing.rows.length > 0) {
-        console.log(`Job already exists: ${job.title} at ${job.company?.display_name}`);
-        continue;
-      }
+      for (const job of jobs) {
+        if (!job.title || !isValidJobTitle(job.title)) {
+          console.log(`Skipped job due to invalid title: ${job.title}`);
+          continue;
+        }
 
-      const loc = job.location || {};
-      const city = loc.area ? loc.area[1] || null : null;
-      const state = loc.area ? loc.area[2] || null : null;
-      const country = loc.area ? loc.area[0] || null : null;
-
-      try {
-        await query(
-          `INSERT INTO jobs (
-            title, description, category, company, location, requirements,
-            apply_url, posted_at, is_active, job_type, country, state, city
-          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
-          [
-            job.title,
-            job.description,
-            job.category?.label || null,
-            job.company?.display_name || null,
-            job.location?.display_name || null,
-            null,
-            job.redirect_url,
-            job.created,
-            true,
-            "entry_level",
-            country,
-            state,
-            city,
-          ]
+        const existing = await query(
+          "SELECT id FROM jobs WHERE title = $1 AND company = $2 AND location = $3",
+          [job.title, job.company?.display_name || null, job.location?.display_name || null]
         );
-        insertedCount++;
-        console.log(`Inserted job: ${job.title}`);
-      } catch (error) {
-        console.error(`Error inserting job ${job.title}:`, error);
+
+        if (existing.rows.length > 0) {
+          console.log(`Job already exists: ${job.title} at ${job.company?.display_name}`);
+          continue;
+        }
+
+        const loc = job.location || {};
+        const city = loc.area ? loc.area[1] || null : null;
+        const state = loc.area ? loc.area[2] || null : null;
+        const country = loc.area ? loc.area[0] || null : null;
+
+        try {
+          await query(
+            `INSERT INTO jobs (
+              title, description, category, company, location, requirements,
+              apply_url, posted_at, is_active, job_type, country, state, city
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+            [
+              job.title,
+              job.description,
+              job.category?.label || null,
+              job.company?.display_name || null,
+              job.location?.display_name || null,
+              null,
+              job.redirect_url,
+              job.created,
+              true,
+              "entry_level",
+              country,
+              state,
+              city,
+            ]
+          );
+          insertedCount++;
+          console.log(`Inserted job: ${job.title}`);
+        } catch (error) {
+          console.error(`Error inserting job ${job.title}:`, error);
+        }
       }
     }
 

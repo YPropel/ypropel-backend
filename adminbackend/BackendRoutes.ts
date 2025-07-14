@@ -166,7 +166,7 @@ router.post(
   "/import-careerjet-jobs",
   adminOnly,
   asyncHandler(async (req: AuthRequest, res: Response) => {
-    const affiliateId = process.env.CAREERJET_AFFILIATE_ID!;
+    const affiliateId = process.env.CAREERJET_AFFID!;
     const keyword = req.body.keyword || "";
     const location = req.body.location || "";
     const page = req.body.page || 1;

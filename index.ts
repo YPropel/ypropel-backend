@@ -3591,7 +3591,11 @@ app.post(
 //----- importentry level jobs route-(main route code is in AdminRoutes.tsx-
 app.use("/admin", adminBackendRouter);
 
-
+app._router.stack.forEach(function(r){
+  if (r.route && r.route.path){
+    console.log('Registered route:', r.route.path)
+  }
+})
 
 //--------Add added articles lists to admin page so they can edit and delete
 /* before edit  new profile 

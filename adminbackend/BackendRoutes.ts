@@ -243,10 +243,19 @@ router.post(
             console.log(`Inserted job: ${job.title}`);
           }
         }
-      } catch (error) {
-        console.error("Careerjet import error:", error);
-        return res.status(500).json({ success: false, error: error.message });
-      }
+      } catch (error: unknown) {
+  console.error("Careerjet import error:", error);
+  let errorMessage = "Unknown error";
+
+  if (error instanceof Error) {
+    errorMessage = error.message;
+  } else if (typeof error === "string") {
+    errorMessage = error;
+  }
+
+  return res.status(500).json({ success: false, error: errorMessage });
+}
+
     }
 
     console.log(`Careerjet import completed. Total inserted jobs: ${insertedCount}`);

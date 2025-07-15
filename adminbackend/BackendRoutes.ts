@@ -161,7 +161,7 @@ router.post(
   })
 );
 
-// Careerjet import route with required user_ip and user_agent params
+// Careerjet import route with improved location parsing and required user_ip and user_agent
 router.post(
   "/import-careerjet-jobs",
   adminOnly,
@@ -174,9 +174,9 @@ router.post(
     for (let page = 1; page <= pages; page++) {
       console.log(`Fetching Careerjet page ${page}...`);
 
-      // Required parameters user_ip and user_agent for Careerjet API
-      const userIp = "127.0.0.1"; // or your server IP
-      const userAgent = "ypropel-backend/1.0";
+      // Provide user_ip and user_agent, mandatory for Careerjet API
+      const userIp = req.ip || "127.0.0.1"; // fallback IP if req.ip undefined
+      const userAgent = req.headers["user-agent"] || "ypropel-backend/1.0";
 
       const careerjetUrl = `http://public.api.careerjet.net/search?affid=${encodeURIComponent(
         CAREERJET_AFFID
@@ -202,8 +202,6 @@ router.post(
               continue;
             }
 
-            // Optional: Add exclude keywords filtering if needed here
-
             const existing = await query(
               "SELECT id FROM jobs WHERE title = $1 AND company = $2 AND location = $3",
               [job.title, job.company || null, job.locations || null]
@@ -212,6 +210,23 @@ router.post(
             if (existing.rows.length > 0) {
               console.log(`Job already exists: ${job.title} at ${job.company}`);
               continue;
+            }
+
+            // Parse city and state from locations string if possible
+            let city: string | null = null;
+            let state: string | null = null;
+            let country: string | null = null;
+
+            if (job.locations) {
+              const parts = job.locations.split(",").map((p) => p.trim());
+              if (parts.length === 2) {
+                city = parts[0];
+                state = parts[1];
+                country = "United States";
+              } else if (parts.length === 1) {
+                city = parts[0];
+                country = parts[0].toLowerCase().includes("usa") ? "United States" : null;
+              }
             }
 
             try {
@@ -231,9 +246,9 @@ router.post(
                   new Date(job.date),
                   true,
                   job_type,
-                  "United States",
-                  null,
-                  null,
+                  country,
+                  state,
+                  city,
                 ]
               );
               insertedCount++;

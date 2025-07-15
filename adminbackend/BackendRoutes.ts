@@ -10,6 +10,14 @@ interface AuthRequest extends Request {
   user?: { userId: number; email?: string; isAdmin?: boolean };
 }
 
+function toSingleString(value: unknown): string {
+  if (!value) return "";
+  if (Array.isArray(value)) return value[0] || "";
+  if (typeof value === "string") return value;
+  return String(value);
+}
+
+
 // Async wrapper to catch errors
 function asyncHandler(
   fn: (req: AuthRequest, res: Response, next: NextFunction) => Promise<any>
@@ -171,23 +179,38 @@ router.post(
   adminOnly,
   asyncHandler(async (req: AuthRequest, res: Response) => {
     const CAREERJET_AFFID = process.env.CAREERJET_AFFID!;
-    const { keyword = "", location = "United States", pages = 3, job_type = "entry_level" } = req.body;
+
+    // Normalize inputs
+    const keyword = toSingleString(req.body.keyword) || "";
+    const location = toSingleString(req.body.location) || "United States";
+    const pages = Number(req.body.pages) || 3;
+    const job_type = toSingleString(req.body.job_type) || "entry_level";
+
+    // User ID check (optional, depending on your app logic)
+    const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
 
     let insertedCount = 0;
 
-    // Get user IP address from request or fallback to a default
-    const userIp = req.ip || req.headers['x-forwarded-for'] || '8.8.8.8'; // example fallback IP
-    const userAgent = req.headers['user-agent'] || 'ypropel-backend/1.0';
+    // Get user IP and user agent for Careerjet API
+    const userIp = req.ip || (req.headers["x-forwarded-for"] as string) || "8.8.8.8";
+    const userAgent = req.headers["user-agent"] || "ypropel-backend/1.0";
 
     for (let page = 1; page <= pages; page++) {
       console.log(`Fetching Careerjet page ${page}...`);
 
-      const careerjetUrl = `http://public.api.careerjet.net/search?affid=${CAREERJET_AFFID}&keywords=${encodeURIComponent(keyword)}&location=${encodeURIComponent(location)}&pagesize=50&pagenumber=${page}&sort=relevance&user_ip=${encodeURIComponent(userIp)}&user_agent=${encodeURIComponent(userAgent)}`;
+      const careerjetUrl = `http://public.api.careerjet.net/search?affid=${CAREERJET_AFFID}&keywords=${encodeURIComponent(
+        keyword
+      )}&location=${encodeURIComponent(location)}&pagesize=50&pagenumber=${page}&sort=relevance&user_ip=${encodeURIComponent(
+        userIp
+      )}&user_agent=${encodeURIComponent(userAgent)}`;
 
       try {
         const response = await axios.get(careerjetUrl, {
           headers: {
-            "User-Agent": userAgent, // keep header too
+            "User-Agent": userAgent,
           },
         });
 
@@ -248,6 +271,7 @@ router.post(
         }
       } catch (error) {
         console.error("Error fetching Careerjet data:", error);
+        // Optionally respond with error or continue
       }
     }
 

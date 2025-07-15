@@ -459,6 +459,71 @@ router.post(
 );
 
 
+router.post(
+  "/import-lever-jobs",
+  adminOnly,
+  asyncHandler(async (req: AuthRequest, res: Response) => {
+    const company = req.body.company || "github"; // default company if not provided
+    const url = `https://jobs.lever.co/${company}?mode=json`;
+
+    console.log(`Fetching Lever jobs for company: ${company}`);
+
+    try {
+      const response = await axios.get(url);
+      const jobs = response.data;
+
+      let insertedCount = 0;
+
+      for (const job of jobs) {
+        const title = job.text || "";
+        const location = job.categories?.location || "Unknown";
+        const applyUrl = job.hostedUrl || "";
+        const description = job.description || "";
+        const companyName = company.charAt(0).toUpperCase() + company.slice(1);
+
+        // Skip if title or applyUrl missing
+        if (!title || !applyUrl) continue;
+
+        // Check if job already exists to avoid duplicates
+        const existing = await query(
+          "SELECT id FROM jobs WHERE title=$1 AND company=$2 AND location=$3",
+          [title, companyName, location]
+        );
+
+        if (existing.rows.length > 0) {
+          console.log(`Job already exists: ${title} at ${companyName} in ${location}`);
+          continue;
+        }
+
+        // Insert job into your jobs table
+        await query(
+          `INSERT INTO jobs (
+            title, description, company, location, apply_url, posted_at, is_active, job_type, country
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+          [
+            title,
+            description,
+            companyName,
+            location,
+            applyUrl,
+            new Date(), // use current date as posted_at since Lever feed doesn’t provide it
+            true,
+            req.body.job_type || "entry_level",
+            "United States",
+          ]
+        );
+
+        insertedCount++;
+        console.log(`Inserted job: ${title} at ${companyName}`);
+      }
+
+      res.json({ success: true, inserted: insertedCount });
+    } catch (error) {
+      console.error("Error fetching Lever jobs:", error);
+      res.status(500).json({ error: "Failed to fetch Lever jobs" });
+    }
+  })
+);
 
 
 

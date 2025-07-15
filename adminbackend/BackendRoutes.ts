@@ -175,15 +175,19 @@ router.post(
 
     let insertedCount = 0;
 
+    // Get user IP address from request or fallback to a default
+    const userIp = req.ip || req.headers['x-forwarded-for'] || '8.8.8.8'; // example fallback IP
+    const userAgent = req.headers['user-agent'] || 'ypropel-backend/1.0';
+
     for (let page = 1; page <= pages; page++) {
       console.log(`Fetching Careerjet page ${page}...`);
 
-      const careerjetUrl = `http://public.api.careerjet.net/search?affid=${CAREERJET_AFFID}&keywords=${encodeURIComponent(keyword)}&location=${encodeURIComponent(location)}&pagesize=50&pagenumber=${page}&sort=relevance`;
+      const careerjetUrl = `http://public.api.careerjet.net/search?affid=${CAREERJET_AFFID}&keywords=${encodeURIComponent(keyword)}&location=${encodeURIComponent(location)}&pagesize=50&pagenumber=${page}&sort=relevance&user_ip=${encodeURIComponent(userIp)}&user_agent=${encodeURIComponent(userAgent)}`;
 
       try {
         const response = await axios.get(careerjetUrl, {
           headers: {
-            "User-Agent": "ypropel-backend/1.0",
+            "User-Agent": userAgent, // keep header too
           },
         });
 

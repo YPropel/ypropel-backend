@@ -681,6 +681,9 @@ router.post(
 );
 
 // ----------------- CAREERJET INTERNSHIP IMPORT -------------------
+// ... your existing imports and code above unchanged
+
+// ----------------- CAREERJET INTERNSHIP IMPORT -------------------
 router.post(
   "/import-careerjet-intern-jobs",
   adminOnly,
@@ -775,6 +778,9 @@ router.post(
               }
             }
 
+            // <--- HERE is the change: infer category from job title
+            const inferredCategory = inferCategoryFromTitle(job.title);
+
             const existing = await query(
               "SELECT id FROM jobs WHERE title = $1 AND company = $2 AND location = $3",
               [job.title, job.company || null, job.locations || null]
@@ -794,7 +800,7 @@ router.post(
                 [
                   job.title,
                   job.description,
-                  null,
+                  inferredCategory,  // used inferredCategory here
                   job.company || null,
                   job.locations || null,
                   null,
@@ -824,6 +830,8 @@ router.post(
     res.json({ success: true, inserted: insertedCount });
   })
 );
+
+// ... rest of your code unchanged
 
 // ----------------- GOOGLE CAREERS IMPORT -------------------
 router.post(

@@ -362,12 +362,96 @@ router.post(
   "/import-tesla-jobs",
   adminOnly,
   asyncHandler(async (req: AuthRequest, res: Response) => {
-    // TODO: Implement Tesla jobs scraping logic here
-    console.log("Tesla jobs import triggered");
+    const { keyword = "", location = "United States", pages = 1, job_type = "entry_level" } = req.body;
 
-    // For now, return success with zero inserted jobs
-    res.json({ success: true, inserted: 0 });
+    let insertedCount = 0;
+
+    for (let page = 1; page <= pages; page++) {
+      console.log(`Fetching Tesla jobs page ${page}...`);
+
+      try {
+        // Tesla API expects POST with JSON body for filters and pagination
+        const response = await axios.post("https://www.tesla.com/careers/api/v1/search", {
+          filters: {
+            keywords: keyword,
+            location: location,
+            // Tesla API does not have direct job_type filtering; you can filter client-side by title or description
+          },
+          page: page,
+          pageSize: 50,
+        });
+
+        const jobs = response.data.data;
+
+        if (!jobs || jobs.length === 0) {
+          console.log(`No Tesla jobs found on page ${page}`);
+          break;
+        }
+
+        for (const job of jobs) {
+          const title = job.title || "";
+          const company = "Tesla";
+          const locationStr = job.location || location;
+          const jobUrl = `https://www.tesla.com/careers/job/${job.id}`;
+          const description = job.description || "";
+          const postedDate = job.postedDate ? new Date(job.postedDate) : new Date();
+
+          // Skip senior roles (optional)
+          const titleLower = title.toLowerCase();
+          if (titleLower.includes("senior") || titleLower.includes("manager") || titleLower.includes("lead")) {
+            console.log(`Skipped senior/manager job: ${title}`);
+            continue;
+          }
+
+          // Check if job already exists
+          const existing = await query(
+            "SELECT id FROM jobs WHERE title = $1 AND company = $2 AND location = $3",
+            [title, company, locationStr]
+          );
+
+          if (existing.rows.length > 0) {
+            console.log(`Job already exists: ${title} at ${company}`);
+            continue;
+          }
+
+          try {
+            await query(
+              `INSERT INTO jobs (
+                title, description, category, company, location, requirements,
+                apply_url, posted_at, is_active, job_type, country, state, city
+              ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+              [
+                title,
+                description,
+                null,
+                company,
+                locationStr,
+                null,
+                jobUrl,
+                postedDate,
+                true,
+                job_type,
+                "United States",
+                null,
+                null,
+              ]
+            );
+            insertedCount++;
+            console.log(`Inserted Tesla job: ${title}`);
+          } catch (err) {
+            console.error(`Error inserting Tesla job ${title}:`, err);
+          }
+        }
+      } catch (error) {
+        console.error(`Error fetching Tesla jobs page ${page}:`, error);
+        return res.status(500).json({ error: "Failed to fetch jobs from Tesla Careers" });
+      }
+    }
+
+    console.log(`Tesla import completed. Total inserted jobs: ${insertedCount}`);
+    res.json({ success: true, inserted: insertedCount });
   })
 );
+
 
 export default router;

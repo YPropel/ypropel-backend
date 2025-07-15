@@ -406,7 +406,163 @@ router.post(
     res.json({ success: true, inserted: insertedCount });
   })
 );
+//------careerjst hourly
+router.post(
+  "/import-careerjet-hourly-jobs",
+  adminOnly,
+  asyncHandler(async (req: AuthRequest, res: Response) => {
+    const CAREERJET_AFFID = process.env.CAREERJET_AFFID!;
 
+    // Normalize inputs
+    const keyword = toSingleString(req.body.keyword) || "";
+    const location = toSingleString(req.body.location) || "United States";
+    const pages = Number(req.body.pages) || 10;
+    const job_type = "hourly"; // fixed job_type for hourly jobs import
+
+    // User ID check (optional, depending on your app logic)
+    const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    let insertedCount = 0;
+
+    // Get user IP and user agent for Careerjet API
+    const userIp = req.ip || (req.headers["x-forwarded-for"] as string) || "8.8.8.8";
+    const userAgent = req.headers["user-agent"] || "ypropel-backend/1.0";
+
+    // **This time we do NOT exclude any keywords**
+    // Instead, we want to include all previously excluded keywords and hourly/shift jobs
+    // So we do NOT filter out jobs by excludeKeywords at all.
+
+    // But to be consistent, let's keep includeKeywords broad (or empty)
+    // or just allow all jobs with keywords like "hourly", "shift" explicitly.
+    // For safety, let's include only jobs that mention "hourly" or "shift" or the excluded job types:
+
+    const includeKeywords = [
+      "hourly",
+      "shift",
+      "technician",
+      "cook",
+      "nurse",
+      "cashier",
+      "driver",
+      "security",
+      "customer service",
+      "janitor",
+      "cleaner",
+      "waiter",
+      "waitress",
+      "barista",
+      "laborer",
+      "warehouse",
+      "stock clerk",
+      "maintenance",
+      "packer",
+      "food service",
+      "host",
+      "dishwasher",
+      // Add any other hourly/shift type keywords you want here
+    ];
+
+    function containsKeyword(text: string, keywords: string[]): boolean {
+      const lowerText = text.toLowerCase();
+      return keywords.some((kw) => lowerText.includes(kw));
+    }
+
+    for (let page = 1; page <= pages; page++) {
+      console.log(`Fetching Careerjet hourly jobs page ${page}...`);
+
+      const careerjetUrl = `http://public.api.careerjet.net/search?affid=${CAREERJET_AFFID}&keywords=${encodeURIComponent(
+        keyword
+      )}&location=${encodeURIComponent(location)}&pagesize=50&pagenumber=${page}&sort=relevance&user_ip=${encodeURIComponent(
+        userIp
+      )}&user_agent=${encodeURIComponent(userAgent)}`;
+
+      try {
+        const response = await axios.get(careerjetUrl, {
+          headers: {
+            "User-Agent": userAgent,
+          },
+        });
+
+        const data = response.data;
+
+        if (data.type === "ERROR") {
+          console.error("Careerjet API error:", data.error);
+          return res.status(500).json({ error: "Careerjet API error: " + data.error });
+        }
+
+        if (data.type === "JOBS" && data.jobs && Array.isArray(data.jobs)) {
+          console.log(`Fetched ${data.jobs.length} hourly jobs from Careerjet.`);
+
+          for (const job of data.jobs) {
+            if (!job.title) {
+              console.log("Skipped job with missing title");
+              continue;
+            }
+
+            // Include only jobs matching includeKeywords
+            if (!containsKeyword(job.title, includeKeywords)) {
+              console.log(`Skipped job - does not match hourly include keywords: ${job.title}`);
+              continue;
+            }
+
+            // Parse city and state from job.locations string
+            const locParts = (job.locations || "").split(",").map((s: string) => s.trim());
+            const city = locParts[0] || null;
+            const state = locParts[1] || null;
+
+            const existing = await query(
+              "SELECT id FROM jobs WHERE title = $1 AND company = $2 AND location = $3",
+              [job.title, job.company || null, job.locations || null]
+            );
+
+            if (existing.rows.length > 0) {
+              console.log(`Job already exists: ${job.title} at ${job.company}`);
+              continue;
+            }
+
+            try {
+              await query(
+                `INSERT INTO jobs (
+                  title, description, category, company, location, requirements,
+                  apply_url, posted_at, is_active, job_type, country, state, city
+                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+                [
+                  job.title,
+                  job.description,
+                  null,
+                  job.company || null,
+                  job.locations || null,
+                  null,
+                  job.url,
+                  new Date(job.date),
+                  true,
+                  job_type, // this will be "hourly"
+                  "United States",
+                  state,
+                  city,
+                ]
+              );
+              insertedCount++;
+              console.log(`Inserted hourly job: ${job.title}`);
+            } catch (error) {
+              console.error(`Error inserting hourly job ${job.title}:`, error);
+            }
+          }
+        }
+      } catch (error) {
+        console.error("Error fetching Careerjet hourly jobs data:", error);
+        // Optionally respond with error or continue
+      }
+    }
+
+    console.log(`Careerjet hourly jobs import completed. Total inserted jobs: ${insertedCount}`);
+
+    res.json({ success: true, inserted: insertedCount });
+  })
+);
 
 // ----------------- GOOGLE CAREERS IMPORT -------------------
 router.post(

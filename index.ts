@@ -3430,7 +3430,7 @@ app.delete(
 
 // Public: Get all active jobs for users
 // Public: Get all active jobs, optionally filtered by job_type
-app.get(
+/*app.get(
   "/jobs",
   asyncHandler(async (req: Request, res: Response) => {
     const { job_type, country, state, city, category } = req.query;
@@ -3464,7 +3464,49 @@ app.get(
     const result = await query(queryStr, params);
     res.json(result.rows);
   })
+); */
+app.get(
+  "/jobs",
+  asyncHandler(async (req: Request, res: Response) => {
+    const { job_type, country, state, city, category } = req.query;
+
+    let queryStr = `
+      SELECT jobs.* 
+      FROM jobs
+      LEFT JOIN us_states ON jobs.state = us_states.abbreviation
+      WHERE jobs.is_active = TRUE
+    `;
+    const params: any[] = [];
+
+    if (job_type) {
+      params.push(job_type);
+      queryStr += ` AND jobs.job_type = $${params.length}`;
+    }
+    if (country) {
+      params.push(country);
+      queryStr += ` AND jobs.country = $${params.length}`;
+    }
+    if (state) {
+      params.push(state);
+      params.push(state);
+      queryStr += ` AND (jobs.state = $${params.length - 1} OR LOWER(us_states.name) = LOWER($${params.length}))`;
+    }
+    if (city) {
+      params.push(city);
+      queryStr += ` AND jobs.city = $${params.length}`;
+    }
+    if (category) {
+      params.push(category);
+      queryStr += ` AND jobs.category = $${params.length}`;
+    }
+
+    queryStr += " ORDER BY jobs.posted_at DESC";
+
+    const result = await query(queryStr, params);
+    res.json(result.rows);
+  })
 );
+
 //--------get job categories for the fitler drop down for public 
 app.get(
   "/job-categories",

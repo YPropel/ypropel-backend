@@ -17,6 +17,81 @@ function toSingleString(value: unknown): string {
   return String(value);
 }
 
+// Category normalization map based on your table
+const categoryMap: Record<string, string> = {
+  "software engineering": "Engineering",
+  "software developer": "Engineering",
+  "software engineer": "Engineering",
+  "engineer": "Engineering",
+  "devops engineer": "Engineering",
+  "network engineer": "Engineering",
+  "system administrator": "Engineering",
+  "database administrator": "Engineering",
+  "cloud engineer": "Engineering",
+  "quality assurance": "Engineering",
+  "qa": "Engineering",
+  "machine learning engineer": "Engineering",
+  "ai engineer": "Engineering",
+  "data engineer": "Engineering",
+
+  "marketing": "Marketing",
+  "digital marketing": "Marketing",
+  "marketing coordinator": "Marketing",
+  "social media": "Marketing",
+  "content strategist": "Marketing",
+  "brand manager": "Marketing",
+  "public relations": "Marketing",
+
+  "sales": "Sales",
+  "business development": "Sales",
+  "account manager": "Sales",
+
+  "designer": "Design",
+  "graphic designer": "Design",
+  "ux designer": "Design",
+  "ui designer": "Design",
+
+  "operations": "Operations",
+  "operations manager": "Operations",
+  "project manager": "Operations",
+  "supply chain": "Operations",
+  "logistics": "Operations",
+  "procurement": "Operations",
+
+  "customer support": "Customer Support",
+  "customer success": "Customer Support",
+  "customer service manager": "Customer Support",
+
+  "finance": "Finance",
+  "financial analyst": "Finance",
+  "accountant": "Finance",
+  "controller": "Finance",
+  "tax specialist": "Finance",
+  "payroll": "Finance",
+  "risk analyst": "Finance",
+  "investment analyst": "Finance",
+  "credit analyst": "Finance",
+
+  "human resources": "Human Resources",
+  "hr": "Human Resources",
+  "recruiter": "Human Resources",
+
+  "product management": "Product Management",
+  "product manager": "Product Management",
+  "product owner": "Product Management",
+  "scrum master": "Product Management",
+
+  "data science": "Data Science",
+  "data scientist": "Data Science",
+  "data analyst": "Data Science",
+  "business intelligence": "Data Science",
+};
+
+function normalizeCategory(cat: string | null | undefined): string | null {
+  if (!cat) return null;
+  const key = cat.toLowerCase().trim();
+  return categoryMap[key] || cat;
+}
 
 // Async wrapper to catch errors
 function asyncHandler(
@@ -137,6 +212,8 @@ router.post(
         const state = loc.area ? loc.area[2] || null : null;
         const country = loc.area ? loc.area[0] || null : null;
 
+        const categoryNormalized = normalizeCategory(job.category?.label || null);
+
         try {
           await query(
             `INSERT INTO jobs (
@@ -146,7 +223,7 @@ router.post(
             [
               job.title,
               job.description,
-              job.category?.label || null,
+              categoryNormalized,
               job.company?.display_name || null,
               job.location?.display_name || null,
               null,
@@ -180,13 +257,11 @@ router.post(
   asyncHandler(async (req: AuthRequest, res: Response) => {
     const CAREERJET_AFFID = process.env.CAREERJET_AFFID!;
 
-    // Normalize inputs
     const keyword = toSingleString(req.body.keyword) || "";
     const location = toSingleString(req.body.location) || "United States";
-    const pages = Number(req.body.pages) || 10; // increased default pages to 10
+    const pages = Number(req.body.pages) || 10;
     const job_type = toSingleString(req.body.job_type) || "entry_level";
 
-    // User ID check (optional, depending on your app logic)
     const userId = req.user?.userId;
     if (!userId) {
       return res.status(401).json({ error: "User not authenticated" });
@@ -194,11 +269,9 @@ router.post(
 
     let insertedCount = 0;
 
-    // Get user IP and user agent for Careerjet API
     const userIp = req.ip || (req.headers["x-forwarded-for"] as string) || "8.8.8.8";
     const userAgent = req.headers["user-agent"] || "ypropel-backend/1.0";
 
-    // Define exclude and include keywords for filtering
     const excludeKeywords = [
       "technician",
       "shift",
@@ -356,6 +429,8 @@ router.post(
             const city = locParts[0] || null;
             const state = locParts[1] || null;
 
+            const categoryNormalized = normalizeCategory(job.category?.label || null);
+
             const existing = await query(
               "SELECT id FROM jobs WHERE title = $1 AND company = $2 AND location = $3",
               [job.title, job.company || null, job.locations || null]
@@ -375,7 +450,7 @@ router.post(
                 [
                   job.title,
                   job.description,
-                  null,
+                  categoryNormalized,
                   job.company || null,
                   job.locations || null,
                   null,
@@ -406,6 +481,7 @@ router.post(
     res.json({ success: true, inserted: insertedCount });
   })
 );
+
 //------careerjet hourly
 router.post(
   "/import-careerjet-hourly-jobs",
@@ -462,7 +538,6 @@ router.post(
       "food service",
       "host",
       "dishwasher",
-      // Add any other hourly/shift type keywords you want here
     ];
 
     function containsKeyword(text: string, keywords: string[]): boolean {
@@ -539,7 +614,7 @@ router.post(
                   job.url,
                   new Date(job.date),
                   true,
-                  job_type, // this will be "hourly"
+                  job_type,
                   "United States",
                   state,
                   city,
@@ -554,7 +629,6 @@ router.post(
         }
       } catch (error) {
         console.error("Error fetching Careerjet hourly jobs data:", error);
-        // Optionally respond with error or continue
       }
     }
 
@@ -571,13 +645,11 @@ router.post(
   asyncHandler(async (req: AuthRequest, res: Response) => {
     const CAREERJET_AFFID = process.env.CAREERJET_AFFID!;
 
-    // Normalize inputs
     const keyword = toSingleString(req.body.keyword) || "";
     const location = toSingleString(req.body.location) || "United States";
     const pages = Number(req.body.pages) || 10;
-    const job_type = "internship"; // fixed job_type for internship jobs
+    const job_type = "internship";
 
-    // User ID check (optional)
     const userId = req.user?.userId;
     if (!userId) {
       return res.status(401).json({ error: "User not authenticated" });
@@ -642,7 +714,6 @@ router.post(
               continue;
             }
 
-            // Parse city and state from job.locations string
             const locParts = (job.locations || "").split(",").map((s: string) => s.trim());
             const city = locParts[0] || null;
             const state = locParts[1] || null;
@@ -696,7 +767,6 @@ router.post(
     res.json({ success: true, inserted: insertedCount });
   })
 );
-
 
 // ----------------- GOOGLE CAREERS IMPORT -------------------
 router.post(

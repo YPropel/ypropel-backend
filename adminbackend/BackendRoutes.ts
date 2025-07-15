@@ -60,17 +60,14 @@ function adminOnly(req: AuthRequest, res: Response, next: NextFunction): void {
   next();
 }
 
-console.log("Admin backend routes loaded, registering import routes");
-
 // Protect all routes below this middleware with authentication
 router.use(authenticateToken);
 
 // ----------------- ADZUNA IMPORT -------------------
 router.post(
   "/import-entry-jobs",
-  // adminOnly,
+  adminOnly,
   asyncHandler(async (req: AuthRequest, res: Response) => {
-    console.log("Adzuna import route called");
     const ADZUNA_APP_ID = process.env.ADZUNA_APP_ID!;
     const ADZUNA_APP_KEY = process.env.ADZUNA_APP_KEY!;
     const ADZUNA_COUNTRY = "us";
@@ -168,12 +165,203 @@ router.post(
   })
 );
 
-// ----------------- TESLA IMPORT -------------------
+// ----------------- CAREERJET IMPORT -------------------
+router.post(
+  "/import-careerjet-jobs",
+  adminOnly,
+  asyncHandler(async (req: AuthRequest, res: Response) => {
+    const CAREERJET_AFFID = process.env.CAREERJET_AFFID!;
+    const { keyword = "", location = "United States", pages = 3, job_type = "entry_level" } = req.body;
+
+    let insertedCount = 0;
+
+    for (let page = 1; page <= pages; page++) {
+      console.log(`Fetching Careerjet page ${page}...`);
+
+      const careerjetUrl = `http://public.api.careerjet.net/search?affid=${CAREERJET_AFFID}&keywords=${encodeURIComponent(keyword)}&location=${encodeURIComponent(location)}&pagesize=50&pagenumber=${page}&sort=relevance`;
+
+      try {
+        const response = await axios.get(careerjetUrl, {
+          headers: {
+            "User-Agent": "ypropel-backend/1.0",
+          },
+        });
+
+        const data = response.data;
+
+        if (data.type === "ERROR") {
+          console.error("Careerjet API error:", data.error);
+          return res.status(500).json({ error: "Careerjet API error: " + data.error });
+        }
+
+        if (data.type === "JOBS" && data.jobs && Array.isArray(data.jobs)) {
+          console.log(`Fetched ${data.jobs.length} jobs from Careerjet.`);
+
+          for (const job of data.jobs) {
+            if (!job.title) {
+              console.log("Skipped job with missing title");
+              continue;
+            }
+
+            const existing = await query(
+              "SELECT id FROM jobs WHERE title = $1 AND company = $2 AND location = $3",
+              [job.title, job.company || null, job.locations || null]
+            );
+
+            if (existing.rows.length > 0) {
+              console.log(`Job already exists: ${job.title} at ${job.company}`);
+              continue;
+            }
+
+            try {
+              await query(
+                `INSERT INTO jobs (
+                  title, description, category, company, location, requirements,
+                  apply_url, posted_at, is_active, job_type, country, state, city
+                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+                [
+                  job.title,
+                  job.description,
+                  null,
+                  job.company || null,
+                  job.locations || null,
+                  null,
+                  job.url,
+                  new Date(job.date),
+                  true,
+                  job_type,
+                  "United States",
+                  null,
+                  null,
+                ]
+              );
+              insertedCount++;
+              console.log(`Inserted job: ${job.title}`);
+            } catch (error) {
+              console.error(`Error inserting job ${job.title}:`, error);
+            }
+          }
+        }
+      } catch (error) {
+        console.error("Error fetching Careerjet data:", error);
+      }
+    }
+
+    console.log(`Careerjet import completed. Total inserted jobs: ${insertedCount}`);
+
+    res.json({ success: true, inserted: insertedCount });
+  })
+);
+
+// ----------------- GOOGLE CAREERS IMPORT -------------------
+router.post(
+  "/import-google-jobs",
+  adminOnly,
+  asyncHandler(async (req: AuthRequest, res: Response) => {
+    const { keyword = "", location = "United States", pages = 3, job_type = "entry_level" } = req.body;
+
+    const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+    const now = new Date();
+
+    let insertedCount = 0;
+
+    for (let page = 0; page < pages; page++) {
+      const start = page * 10;
+
+      const filter = `location=${encodeURIComponent(location)}`;
+      const employmentType = job_type === "internship" ? "INTERN" : "FULL_TIME";
+      const url = `https://careers.google.com/api/v3/search/?query=${encodeURIComponent(
+        keyword
+      )}&${filter}&offset=${start}&limit=10&employment_type=${employmentType}`;
+
+      try {
+        const response = await axios.get(url);
+        const jobs = response.data.jobs;
+
+        if (!jobs || jobs.length === 0) {
+          console.log(`No jobs found on Google Careers page ${page + 1}`);
+          break;
+        }
+
+        for (const job of jobs) {
+          const title = job.title || "";
+          const company = job.company?.name || "Google";
+          const locationStr =
+            job.locations?.map((loc: any) => loc.name).join(", ") || "";
+          const jobUrl = job.applyUrl || `https://careers.google.com/jobs/results/${job.jobId}/`;
+          const description = job.description || "";
+          const postedDate = job.postedDate ? new Date(job.postedDate) : null;
+
+          if (!postedDate || now.getTime() - postedDate.getTime() > THIRTY_DAYS_MS) {
+            console.log(`Skipped old or missing date job: ${title}`);
+            continue;
+          }
+
+          const titleLower = title.toLowerCase();
+          if (titleLower.includes("senior") || titleLower.includes("manager") || titleLower.includes("lead")) {
+            console.log(`Skipped senior/manager job: ${title}`);
+            continue;
+          }
+
+          const existing = await query(
+            "SELECT id FROM jobs WHERE title = $1 AND company = $2 AND location = $3",
+            [title, company, locationStr]
+          );
+
+          if (existing.rows.length > 0) {
+            console.log(`Job already exists: ${title} at ${company}`);
+            continue;
+          }
+
+          if (!jobUrl || jobUrl.includes("job-not-found") || jobUrl.includes("removed")) {
+            console.log(`Skipped job with invalid apply URL: ${title}`);
+            continue;
+          }
+
+          try {
+            await query(
+              `INSERT INTO jobs (
+                title, description, category, company, location, requirements,
+                apply_url, posted_at, is_active, job_type, country, state, city
+              ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+              [
+                title,
+                description,
+                null,
+                company,
+                locationStr,
+                null,
+                jobUrl,
+                postedDate,
+                true,
+                job_type,
+                "United States",
+                null,
+                null,
+              ]
+            );
+            insertedCount++;
+            console.log(`Inserted job: ${title}`);
+          } catch (err) {
+            console.error(`Error inserting job ${title}:`, err);
+          }
+        }
+      } catch (error) {
+        console.error(`Error fetching Google Careers page ${page + 1}:`, error);
+        return res.status(500).json({ error: "Failed to fetch jobs from Google Careers" });
+      }
+    }
+
+    console.log(`Google Careers import completed. Total inserted jobs: ${insertedCount}`);
+    res.json({ success: true, inserted: insertedCount });
+  })
+);
+
+// ----------------- TESLA IMPORT (new company scraper example) -------------------
 router.post(
   "/import-tesla-jobs",
-  // adminOnly,
+  adminOnly,
   asyncHandler(async (req: AuthRequest, res: Response) => {
-    console.log("Tesla import route called");
     const { keyword = "", location = "United States", pages = 1, job_type = "entry_level" } = req.body;
 
     let insertedCount = 0;
@@ -212,7 +400,7 @@ router.post(
 
           if (!postedDate) {
             console.log(`Tesla job missing postedDate, skipping: ${title}`);
-            continue;
+            continue; // or accept, your choice
           }
 
           const titleLower = title.toLowerCase();
@@ -270,80 +458,101 @@ router.post(
   })
 );
 
-// ----------------- MICROSOFT IMPORT (Minimal route for now) -------------------
+
 router.post(
   "/import-microsoft-jobs",
-  // adminOnly,
+  adminOnly,
   asyncHandler(async (req: AuthRequest, res: Response) => {
-    console.log("Microsoft import route called");
+    const { keyword = "", location = "United States", pages = 1, job_type = "entry_level" } = req.body;
 
-    // For now, just respond success to isolate issues.
-    // You can add real Microsoft scraping or API logic later.
-    res.json({ success: true, inserted: 0 });
-  })
-);
+    let insertedCount = 0;
 
-// ----------------- LEVER IMPORT -------------------
-router.post(
-  "/import-lever-jobs",
-  // adminOnly,
-  asyncHandler(async (req: AuthRequest, res: Response) => {
-    console.log("Lever import route called");
-    const company = req.body.company || "github"; // default company if not provided
-    const url = `https://jobs.lever.co/${company}?mode=json`;
+    for (let page = 1; page <= pages; page++) {
+      console.log(`Fetching Microsoft jobs page ${page}...`);
 
-    try {
-      const response = await axios.get(url);
-      const jobs = response.data;
+      try {
+        // Microsoft careers API endpoint
+        const response = await axios.get("https://careers.microsoft.com/api/jobs", {
+          params: {
+            keyword,
+            location,
+            page,
+            pageSize: 50,
+          },
+        });
 
-      let insertedCount = 0;
+        const jobs = response.data?.jobs || [];
 
-      for (const job of jobs) {
-        const title = job.text || "";
-        const location = job.categories?.location || "Unknown";
-        const applyUrl = job.hostedUrl || "";
-        const description = job.description || "";
-        const companyName = company.charAt(0).toUpperCase() + company.slice(1);
-
-        if (!title || !applyUrl) continue;
-
-        const existing = await query(
-          "SELECT id FROM jobs WHERE title=$1 AND company=$2 AND location=$3",
-          [title, companyName, location]
-        );
-
-        if (existing.rows.length > 0) {
-          console.log(`Job already exists: ${title} at ${companyName} in ${location}`);
-          continue;
+        if (jobs.length === 0) {
+          console.log(`No Microsoft jobs found on page ${page}`);
+          break;
         }
 
-        await query(
-          `INSERT INTO jobs (
-            title, description, company, location, apply_url, posted_at, is_active, job_type, country
-          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-          [
-            title,
-            description,
-            companyName,
-            location,
-            applyUrl,
-            new Date(),
-            true,
-            req.body.job_type || "entry_level",
-            "United States",
-          ]
-        );
+        for (const job of jobs) {
+          const title = job.title || "";
+          const company = "Microsoft";
+          const locationStr = job.location || location;
+          const jobUrl = job.url || `https://careers.microsoft.com/us/en/job/${job.id}`;
+          const description = job.description || "";
+          const postedDate = job.postedDate ? new Date(job.postedDate) : new Date();
 
-        insertedCount++;
-        console.log(`Inserted job: ${title} at ${companyName}`);
+          // Optional: skip senior roles
+          const titleLower = title.toLowerCase();
+          if (titleLower.includes("senior") || titleLower.includes("manager") || titleLower.includes("lead")) {
+            console.log(`Skipped senior/manager job: ${title}`);
+            continue;
+          }
+
+          // Check if job already exists
+          const existing = await query(
+            "SELECT id FROM jobs WHERE title = $1 AND company = $2 AND location = $3",
+            [title, company, locationStr]
+          );
+
+          if (existing.rows.length > 0) {
+            console.log(`Job already exists: ${title} at ${company}`);
+            continue;
+          }
+
+          try {
+            await query(
+              `INSERT INTO jobs (
+                title, description, category, company, location, requirements,
+                apply_url, posted_at, is_active, job_type, country, state, city
+              ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+              [
+                title,
+                description,
+                null,
+                company,
+                locationStr,
+                null,
+                jobUrl,
+                postedDate,
+                true,
+                job_type,
+                "United States",
+                null,
+                null,
+              ]
+            );
+            insertedCount++;
+            console.log(`Inserted Microsoft job: ${title}`);
+          } catch (err) {
+            console.error(`Error inserting Microsoft job ${title}:`, err);
+          }
+        }
+      } catch (error) {
+        console.error(`Error fetching Microsoft jobs page ${page}:`, error);
+        return res.status(500).json({ error: "Failed to fetch jobs from Microsoft Careers" });
       }
-
-      res.json({ success: true, inserted: insertedCount });
-    } catch (error) {
-      console.error("Error fetching Lever jobs:", error);
-      res.status(500).json({ error: "Failed to fetch Lever jobs" });
     }
+
+    console.log(`Microsoft import completed. Total inserted jobs: ${insertedCount}`);
+    res.json({ success: true, inserted: insertedCount });
   })
 );
+
+
 
 export default router;

@@ -63,246 +63,76 @@ function adminOnly(req: AuthRequest, res: Response, next: NextFunction): void {
 // Protect all routes below this middleware with authentication
 router.use(authenticateToken);
 
-// ----------------- ADZUNA IMPORT -------------------
-router.post(
-  "/import-entry-jobs",
-  adminOnly,
-  asyncHandler(async (req: AuthRequest, res: Response) => {
-    const ADZUNA_APP_ID = process.env.ADZUNA_APP_ID!;
-    const ADZUNA_APP_KEY = process.env.ADZUNA_APP_KEY!;
-    const ADZUNA_COUNTRY = "us";
-
-    const {
-      keyword = "",
-      location = "United States",
-      pages = 3,
-      job_type = "entry_level",
-    } = req.body;
-
-    const excludeKeywords = [
-      "cook",
-      "customer support",
-      "technician",
-      "cashier",
-      "driver",
-      "security",
-      "hourly",
-      "shift supervisor",
-      "supervisor",
-      "janitor",
-    ];
-
-    function isValidJobTitle(title: string): boolean {
-      const lowerTitle = title.toLowerCase();
-      return !excludeKeywords.some((kw) => lowerTitle.includes(kw));
-    }
-
-    let insertedCount = 0;
-
-    for (let page = 1; page <= pages; page++) {
-      console.log(`Fetching Adzuna page ${page}...`);
-
-      const adzunaUrl = `https://api.adzuna.com/v1/api/jobs/${ADZUNA_COUNTRY}/search/${page}?app_id=${ADZUNA_APP_ID}&app_key=${ADZUNA_APP_KEY}&results_per_page=50&max_days_old=30&content-type=application/json${keyword ? `&what=${encodeURIComponent(keyword)}` : ""}${location ? `&where=${encodeURIComponent(location)}` : ""}`;
-
-      const response = await axios.get(adzunaUrl);
-      const jobs = response.data.results;
-      console.log(`Fetched ${jobs.length} jobs from Adzuna.`);
-
-      for (const job of jobs) {
-        if (!job.title || !isValidJobTitle(job.title)) {
-          console.log(`Skipped job due to excluded title: ${job.title}`);
-          continue;
-        }
-
-        const existing = await query(
-          "SELECT id FROM jobs WHERE title = $1 AND company = $2 AND location = $3",
-          [job.title, job.company?.display_name || null, job.location?.display_name || null]
-        );
-
-        if (existing.rows.length > 0) {
-          console.log(`Job already exists: ${job.title} at ${job.company?.display_name}`);
-          continue;
-        }
-
-        const loc = job.location || {};
-        const city = loc.area ? loc.area[1] || null : null;
-        const state = loc.area ? loc.area[2] || null : null;
-        const country = loc.area ? loc.area[0] || null : null;
-
-        try {
-          await query(
-            `INSERT INTO jobs (
-              title, description, category, company, location, requirements,
-              apply_url, posted_at, is_active, job_type, country, state, city
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
-            [
-              job.title,
-              job.description,
-              job.category?.label || null,
-              job.company?.display_name || null,
-              job.location?.display_name || null,
-              null,
-              job.redirect_url,
-              job.created,
-              true,
-              job_type,
-              country,
-              state,
-              city,
-            ]
-          );
-          insertedCount++;
-          console.log(`Inserted job: ${job.title}`);
-        } catch (error) {
-          console.error(`Error inserting job ${job.title}:`, error);
-        }
-      }
-    }
-
-    console.log(`Adzuna import completed. Total inserted jobs: ${insertedCount}`);
-
-    res.json({ success: true, inserted: insertedCount });
-  })
-);
-
-// ----------------- CAREERJET IMPORT -------------------
-router.post(
-  "/import-careerjet-jobs",
-  adminOnly,
-  asyncHandler(async (req: AuthRequest, res: Response) => {
-    const CAREERJET_AFFID = process.env.CAREERJET_AFFID!;
-    const { keyword = "", location = "United States", pages = 3, job_type = "entry_level" } = req.body;
-
-    let insertedCount = 0;
-
-    for (let page = 1; page <= pages; page++) {
-      console.log(`Fetching Careerjet page ${page}...`);
-
-      const careerjetUrl = `http://public.api.careerjet.net/search?affid=${CAREERJET_AFFID}&keywords=${encodeURIComponent(keyword)}&location=${encodeURIComponent(location)}&pagesize=50&pagenumber=${page}&sort=relevance`;
-
-      try {
-        const response = await axios.get(careerjetUrl, {
-          headers: {
-            "User-Agent": "ypropel-backend/1.0",
-          },
-        });
-
-        const data = response.data;
-
-        if (data.type === "ERROR") {
-          console.error("Careerjet API error:", data.error);
-          return res.status(500).json({ error: "Careerjet API error: " + data.error });
-        }
-
-        if (data.type === "JOBS" && data.jobs && Array.isArray(data.jobs)) {
-          console.log(`Fetched ${data.jobs.length} jobs from Careerjet.`);
-
-          for (const job of data.jobs) {
-            if (!job.title) {
-              console.log("Skipped job with missing title");
-              continue;
-            }
-
-            // Optional: Add exclude keywords filtering if needed here
-
-            const existing = await query(
-              "SELECT id FROM jobs WHERE title = $1 AND company = $2 AND location = $3",
-              [job.title, job.company || null, job.locations || null]
-            );
-
-            if (existing.rows.length > 0) {
-              console.log(`Job already exists: ${job.title} at ${job.company}`);
-              continue;
-            }
-
-            try {
-              await query(
-                `INSERT INTO jobs (
-                  title, description, category, company, location, requirements,
-                  apply_url, posted_at, is_active, job_type, country, state, city
-                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
-                [
-                  job.title,
-                  job.description,
-                  null,
-                  job.company || null,
-                  job.locations || null,
-                  null,
-                  job.url,
-                  new Date(job.date),
-                  true,
-                  job_type,
-                  "United States",
-                  null,
-                  null,
-                ]
-              );
-              insertedCount++;
-              console.log(`Inserted job: ${job.title}`);
-            } catch (error) {
-              console.error(`Error inserting job ${job.title}:`, error);
-            }
-          }
-        }
-      } catch (error) {
-        console.error("Error fetching Careerjet data:", error);
-      }
-    }
-
-    console.log(`Careerjet import completed. Total inserted jobs: ${insertedCount}`);
-
-    res.json({ success: true, inserted: insertedCount });
-  })
-);
-
-// ----------------- GOOGLE CAREERS IMPORT -------------------
+// Google Careers import route (example using hypothetical Google Careers API endpoint)
 router.post(
   "/import-google-jobs",
   adminOnly,
   asyncHandler(async (req: AuthRequest, res: Response) => {
-    const { keyword = "", location = "", pages = 3, job_type = "internship" } = req.body;
+    // You need your Google Cloud API key here in your env
+    const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY!;
+    const { keyword = "", location = "United States", pages = 3, job_type = "entry_level" } = req.body;
+
+    // Define experience filter keywords (approximate filtering)
+    const excludeKeywords = ['senior', 'manager', 'director', 'lead', 'principal'];
+    const includeKeywords = ['entry level', 'junior', '1 year', '2 years', '3 years', '4 years', '5 years', 'graduate', 'internship'];
+
+    function isEntryLevelJob(title: string, description: string) {
+      const text = (title + ' ' + description).toLowerCase();
+      if (excludeKeywords.some(kw => text.includes(kw))) return false;
+      if (includeKeywords.some(kw => text.includes(kw))) return true;
+      // default to false if unsure
+      return false;
+    }
 
     let insertedCount = 0;
 
-    for (let page = 0; page < pages; page++) {
-      const start = page * 10;
+    for (let page = 1; page <= pages; page++) {
+      console.log(`Fetching Google Careers page ${page}...`);
 
-      const url = `https://careers.google.com/api/v3/search/?query=${encodeURIComponent(
-        keyword
-      )}&location=${encodeURIComponent(location)}&offset=${start}&limit=10&employment_type=${
-        job_type === "internship" ? "INTERN" : "FULL_TIME"
-      }`;
+      // Example Google Jobs API URL - you need to replace with actual Google Jobs API endpoint and query parameters
+      const googleJobsUrl = `https://jobs.googleapis.com/v4/projects/YOUR_PROJECT_ID/tenants/YOUR_TENANT_ID/jobs?pageSize=50&pageToken=${page}&filter=location=United States&query=${encodeURIComponent(keyword)}&key=${GOOGLE_API_KEY}`;
 
       try {
-        const response = await axios.get(url);
+        const response = await axios.get(googleJobsUrl);
 
-        const jobs = response.data.jobs;
+        const jobs = response.data.jobs || [];
 
-        if (!jobs || jobs.length === 0) {
-          console.log(`No jobs found on Google Careers page ${page + 1}`);
-          break;
-        }
+        console.log(`Fetched ${jobs.length} jobs from Google Careers.`);
 
         for (const job of jobs) {
           const title = job.title || "";
-          const company = "Google";
-          const locationStr =
-            job.locations?.map((loc: any) => loc.name).join(", ") || "";
-          const jobUrl = `https://careers.google.com/jobs/results/${job.jobId}/`;
           const description = job.description || "";
-          const postedDate = job.postedDate ? new Date(job.postedDate) : new Date();
-
-          // Check if job already exists
-          const existing = await query(
-            "SELECT id FROM jobs WHERE title = $1 AND company = $2 AND location = $3",
-            [title, company, locationStr]
-          );
-
-          if (existing.rows.length > 0) {
-            console.log(`Job already exists: ${title} at ${company}`);
+          if (!isEntryLevelJob(title, description)) {
+            console.log(`Skipped job due to experience level mismatch: ${title}`);
             continue;
           }
 
+          // Check job status active - example field (you need to check actual API response fields)
+          if (job.jobState !== 'JOB_STATE_PUBLISHED') {
+            console.log(`Skipped inactive job: ${title}`);
+            continue;
+          }
+
+          // Construct apply URL - ensure it's a full valid URL
+          const applyUrl = job.applicationInfo?.uris?.length > 0 ? job.applicationInfo.uris[0] : job.jobUri || "";
+
+          if (!applyUrl.startsWith("http")) {
+            console.log(`Skipped job due to invalid apply URL: ${title}`);
+            continue;
+          }
+
+          // Check if job exists already in DB
+          const existing = await query(
+            "SELECT id FROM jobs WHERE title = $1 AND company = $2 AND location = $3",
+            [title, job.companyDisplayName || null, job.addresses?.[0] || null]
+          );
+
+          if (existing.rows.length > 0) {
+            console.log(`Job already exists: ${title} at ${job.companyDisplayName}`);
+            continue;
+          }
+
+          // Insert into jobs table
           try {
             await query(
               `INSERT INTO jobs (
@@ -312,12 +142,12 @@ router.post(
               [
                 title,
                 description,
+                null, // category - if API provides category, map here
+                job.companyDisplayName || null,
+                job.addresses?.[0] || null,
                 null,
-                company,
-                locationStr,
-                null,
-                jobUrl,
-                postedDate,
+                applyUrl,
+                job.postingCreateTime || new Date(),
                 true,
                 job_type,
                 "United States",
@@ -327,17 +157,17 @@ router.post(
             );
             insertedCount++;
             console.log(`Inserted job: ${title}`);
-          } catch (err) {
-            console.error(`Error inserting job ${title}:`, err);
+          } catch (error) {
+            console.error(`Error inserting job ${title}:`, error);
           }
         }
       } catch (error) {
-        console.error(`Error fetching Google Careers page ${page + 1}:`, error);
-        return res.status(500).json({ error: "Failed to fetch jobs from Google Careers" });
+        console.error("Error fetching Google Careers data:", error);
       }
     }
 
     console.log(`Google Careers import completed. Total inserted jobs: ${insertedCount}`);
+
     res.json({ success: true, inserted: insertedCount });
   })
 );

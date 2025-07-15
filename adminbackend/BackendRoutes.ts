@@ -755,19 +755,19 @@ router.post(
             }
 
             const locParts = (job.locations || "").split(",").map((s: string) => s.trim());
-            const city = locParts[0] || null;
-            const stateFull = locParts[1] || null;
+const city = locParts[0] || null;
+const stateFull = locParts[1] || null;
 
-            let stateAbbreviation: string | null = null;
-            if (stateFull) {
-              const result = await query(
-                "SELECT abbreviation FROM us_states WHERE LOWER(name) = LOWER($1) LIMIT 1",
-                [stateFull]
-              );
-              if (result.rows.length > 0) {
-                stateAbbreviation = result.rows[0].abbreviation;
-              }
-            }
+let stateAbbreviation: string | null = null;
+if (stateFull) {
+  const result = await query(
+    "SELECT abbreviation FROM us_states WHERE LOWER(name) = LOWER($1) LIMIT 1",
+    [stateFull]
+  );
+  if (result.rows.length > 0) {
+    stateAbbreviation = result.rows[0].abbreviation;
+  }
+}
 
             const existing = await query(
               "SELECT id FROM jobs WHERE title = $1 AND company = $2 AND location = $3",

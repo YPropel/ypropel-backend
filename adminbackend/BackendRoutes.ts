@@ -63,6 +63,7 @@ function adminOnly(req: AuthRequest, res: Response, next: NextFunction): void {
 // Protect all routes below this middleware with authentication
 router.use(authenticateToken);
 
+// Common function to check excluded job titles
 const excludeKeywords = [
   "cook",
   "customer support",
@@ -74,15 +75,14 @@ const excludeKeywords = [
   "shift supervisor",
   "supervisor",
   "janitor",
-  // Add more roles to exclude as needed
+  // Add more as needed
 ];
-
 function isValidJobTitle(title: string): boolean {
   const lowerTitle = title.toLowerCase();
   return !excludeKeywords.some((kw) => lowerTitle.includes(kw));
 }
 
-// Admin-only import entry-level jobs route (Adzuna)
+// Adzuna import route
 router.post(
   "/import-entry-jobs",
   adminOnly,
@@ -92,6 +92,7 @@ router.post(
     const ADZUNA_COUNTRY = "us";
 
     const { keyword = "", location = "", pages = 3 } = req.body; // default 3 pages
+
     let insertedCount = 0;
 
     for (let page = 1; page <= pages; page++) {
@@ -160,7 +161,7 @@ router.post(
   })
 );
 
-// Admin-only import Careerjet jobs route
+// Careerjet import route
 router.post(
   "/import-careerjet-jobs",
   adminOnly,
@@ -173,16 +174,14 @@ router.post(
     for (let page = 1; page <= pages; page++) {
       console.log(`Fetching Careerjet page ${page}...`);
 
-      // Build Careerjet URL using HTTP (not HTTPS)
-      const cjUrl = `http://public.api.careerjet.net/search?affid=${CAREERJET_AFFID}&keywords=${encodeURIComponent(keyword)}&location=${encodeURIComponent(location)}&pagesize=50&pagenumber=${page}&sort=relevance`;
+      // Get IP and User-Agent
+      const userIp = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || '8.8.8.8';
+      const userAgent = req.headers['user-agent'] || 'ypropel-backend';
+
+      const cjUrl = `http://public.api.careerjet.net/search?affid=${CAREERJET_AFFID}&keywords=${encodeURIComponent(keyword)}&location=${encodeURIComponent(location)}&pagesize=50&pagenumber=${page}&sort=relevance&user_ip=${encodeURIComponent(userIp)}&user_agent=${encodeURIComponent(userAgent)}`;
 
       try {
-        const response = await axios.get(cjUrl, {
-          headers: {
-            "User-Agent": "ypropel-backend",
-          },
-          timeout: 10000,
-        });
+        const response = await axios.get(cjUrl, { timeout: 10000 });
 
         if (response.data.type === "ERROR") {
           console.error("Careerjet API error:", response.data.error);

@@ -63,7 +63,7 @@ function adminOnly(req: AuthRequest, res: Response, next: NextFunction): void {
 // Protect all routes below this middleware with authentication
 router.use(authenticateToken);
 
-// === Adzuna Import Route ===
+// Adzuna import route
 router.post(
   "/import-entry-jobs",
   adminOnly,
@@ -85,7 +85,6 @@ router.post(
       "shift supervisor",
       "supervisor",
       "janitor",
-      // Add more roles to exclude as needed
     ];
 
     function isValidJobTitle(title: string): boolean {
@@ -161,84 +160,117 @@ router.post(
   })
 );
 
-// === Careerjet Import Route ===
+// Careerjet import route
 router.post(
   "/import-careerjet-jobs",
   adminOnly,
   asyncHandler(async (req: AuthRequest, res: Response) => {
-    const affiliateId = process.env.CAREERJET_AFFID!;
-    const keyword = req.body.keyword || "";
-    const location = req.body.location || "";
-    const page = req.body.page || 1;
-    const pageSize = 50;
+    const affid = process.env.CAREERJET_AFFID;
+    if (!affid) {
+      return res.status(500).json({ error: "Careerjet affiliate ID (CAREERJET_AFFID) is not set" });
+    }
 
-    // Extract user IP address from headers or connection
+    const { keyword = "", location = "", pages = 3 } = req.body;
+
+    // Get user IP robustly (supports proxy headers)
     const userIp =
-      (req.headers['x-forwarded-for'] as string)?.split(",")[0] ||
+      (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
       req.connection.remoteAddress ||
-      req.socket.remoteAddress ||
-      "";
+      '8.8.8.8'; // fallback to Google DNS IP for testing
 
-    // Extract user agent string
-    const userAgent = req.headers["user-agent"] || "Mozilla/5.0";
+    // Get user agent or fallback string
+    const userAgent = req.headers['user-agent'] || 'Mozilla/5.0';
 
-    const careerjetUrl = `https://public.api.careerjet.net/search?affid=${affiliateId}&keywords=${encodeURIComponent(keyword)}&location=${encodeURIComponent(location)}&pagesize=${pageSize}&pagenumber=${page}&sort=relevance&user_ip=${encodeURIComponent(userIp)}&user_agent=${encodeURIComponent(userAgent)}`;
+    let insertedCount = 0;
 
-    console.log(`Fetching Careerjet page ${page}...`);
+    for (let page = 1; page <= pages; page++) {
+      try {
+        const url = `http://public.api.careerjet.net/search?affid=${affid}` +
+          `&keywords=${encodeURIComponent(keyword)}` +
+          `&location=${encodeURIComponent(location)}` +
+          `&pagesize=50&pagenumber=${page}&sort=relevance` +
+          `&user_ip=${encodeURIComponent(userIp)}` +
+          `&user_agent=${encodeURIComponent(userAgent)}`;
 
-    try {
-      const response = await axios.get(careerjetUrl);
-      const data = response.data;
+        console.log(`Fetching Careerjet page ${page} with URL:`, url);
 
-      if (data.type !== "JOBS") {
-        console.log("Careerjet API response type:", data.type, data.error || data);
-        return res.status(400).json({ success: false, message: `Careerjet API error: ${data.error || "Unexpected response"}` });
-      }
+        const response = await axios.get(url);
+        const data = response.data;
 
-      const jobs = data.jobs;
-      let insertedCount = 0;
+        if (data.type === 'ERROR') {
+          console.error("Careerjet API error:", data.error);
+          return res.status(500).json({ error: `Careerjet API error: ${data.error}` });
+        }
 
-      for (const job of jobs) {
-        // Check if job already exists
-        const existing = await query(
-          "SELECT id FROM jobs WHERE title = $1 AND company = $2 AND location = $3",
-          [job.title, job.company || null, job.locations || null]
-        );
-
-        if (existing.rows.length > 0) {
-          console.log(`Careerjet job already exists: ${job.title} at ${job.company}`);
+        if (data.type !== 'JOBS' || !Array.isArray(data.jobs)) {
+          console.log("No jobs returned on page", page);
           continue;
         }
 
-        try {
-          await query(
-            `INSERT INTO jobs (
-              title, description, company, location, apply_url, posted_at, is_active, job_type
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-            [
-              job.title,
-              job.description,
-              job.company || null,
-              job.locations || null,
-              job.url,
-              job.date,
-              true,
-              "entry_level",
-            ]
-          );
-          insertedCount++;
-          console.log(`Inserted Careerjet job: ${job.title}`);
-        } catch (error) {
-          console.error(`Error inserting Careerjet job ${job.title}:`, error);
-        }
-      }
+        for (const job of data.jobs) {
+          // Simple exclude keywords filter
+          const excludeKeywords = [
+            "cook",
+            "customer support",
+            "technician",
+            "cashier",
+            "driver",
+            "security",
+            "hourly",
+            "shift supervisor",
+            "supervisor",
+            "janitor",
+          ];
+          const lowerTitle = job.title?.toLowerCase() || "";
+          if (excludeKeywords.some(kw => lowerTitle.includes(kw))) {
+            console.log(`Skipped job due to excluded title: ${job.title}`);
+            continue;
+          }
 
-      console.log(`Careerjet import completed. Total inserted jobs: ${insertedCount}`);
-      res.json({ success: true, inserted: insertedCount });
-    } catch (error) {
-      console.error("Careerjet API fetch error:", error);
-      res.status(500).json({ success: false, message: "Careerjet API fetch failed" });
+          const existing = await query(
+            "SELECT id FROM jobs WHERE title = $1 AND company = $2 AND location = $3",
+            [job.title, job.company || null, job.locations || null]
+          );
+
+          if (existing.rows.length > 0) {
+            console.log(`Job already exists: ${job.title} at ${job.company}`);
+            continue;
+          }
+
+          try {
+            await query(
+              `INSERT INTO jobs (
+                title, description, category, company, location, requirements,
+                apply_url, posted_at, is_active, job_type
+              ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+              [
+                job.title,
+                job.description || null,
+                null,
+                job.company || null,
+                job.locations || null,
+                null,
+                job.url || null,
+                job.date ? new Date(job.date) : new Date(),
+                true,
+                "entry_level",
+              ]
+            );
+            insertedCount++;
+            console.log(`Inserted job: ${job.title}`);
+          } catch (error) {
+            console.error(`Error inserting job ${job.title}:`, error);
+          }
+        }
+      } catch (error) {
+        console.error(`Error fetching Careerjet page ${page}:`, error);
+        return res.status(500).json({ error: `Failed to fetch Careerjet jobs: ${error}` });
+      }
     }
+
+    console.log(`Careerjet import completed. Total inserted jobs: ${insertedCount}`);
+
+    res.json({ success: true, inserted: insertedCount });
   })
 );
 

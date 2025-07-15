@@ -406,7 +406,7 @@ router.post(
     res.json({ success: true, inserted: insertedCount });
   })
 );
-//------careerjst hourly
+//------careerjet hourly
 router.post(
   "/import-careerjet-hourly-jobs",
   adminOnly,
@@ -563,6 +563,140 @@ router.post(
     res.json({ success: true, inserted: insertedCount });
   })
 );
+
+//-- ---careerjet internhips
+router.post(
+  "/import-careerjet-intern-jobs",
+  adminOnly,
+  asyncHandler(async (req: AuthRequest, res: Response) => {
+    const CAREERJET_AFFID = process.env.CAREERJET_AFFID!;
+
+    // Normalize inputs
+    const keyword = toSingleString(req.body.keyword) || "";
+    const location = toSingleString(req.body.location) || "United States";
+    const pages = Number(req.body.pages) || 10;
+    const job_type = "internship"; // fixed job_type for internship jobs
+
+    // User ID check (optional)
+    const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    let insertedCount = 0;
+
+    const userIp = req.ip || (req.headers["x-forwarded-for"] as string) || "8.8.8.8";
+    const userAgent = req.headers["user-agent"] || "ypropel-backend/1.0";
+
+    const includeKeywords = [
+      "internship",
+      "intern",
+      "early career",
+      "graduate",
+      "trainee",
+      "apprentice",
+      "co-op",
+      "student",
+      "summer intern",
+    ];
+
+    function containsKeyword(text: string, keywords: string[]): boolean {
+      const lowerText = text.toLowerCase();
+      return keywords.some((kw) => lowerText.includes(kw));
+    }
+
+    for (let page = 1; page <= pages; page++) {
+      console.log(`Fetching Careerjet internship jobs page ${page}...`);
+
+      const careerjetUrl = `http://public.api.careerjet.net/search?affid=${CAREERJET_AFFID}&keywords=${encodeURIComponent(
+        keyword
+      )}&location=${encodeURIComponent(location)}&pagesize=50&pagenumber=${page}&sort=relevance&user_ip=${encodeURIComponent(
+        userIp
+      )}&user_agent=${encodeURIComponent(userAgent)}`;
+
+      try {
+        const response = await axios.get(careerjetUrl, {
+          headers: {
+            "User-Agent": userAgent,
+          },
+        });
+
+        const data = response.data;
+
+        if (data.type === "ERROR") {
+          console.error("Careerjet API error:", data.error);
+          return res.status(500).json({ error: "Careerjet API error: " + data.error });
+        }
+
+        if (data.type === "JOBS" && data.jobs && Array.isArray(data.jobs)) {
+          console.log(`Fetched ${data.jobs.length} internship jobs from Careerjet.`);
+
+          for (const job of data.jobs) {
+            if (!job.title) {
+              console.log("Skipped job with missing title");
+              continue;
+            }
+
+            if (!containsKeyword(job.title, includeKeywords)) {
+              console.log(`Skipped job - does not match internship include keywords: ${job.title}`);
+              continue;
+            }
+
+            // Parse city and state from job.locations string
+            const locParts = (job.locations || "").split(",").map((s: string) => s.trim());
+            const city = locParts[0] || null;
+            const state = locParts[1] || null;
+
+            const existing = await query(
+              "SELECT id FROM jobs WHERE title = $1 AND company = $2 AND location = $3",
+              [job.title, job.company || null, job.locations || null]
+            );
+
+            if (existing.rows.length > 0) {
+              console.log(`Job already exists: ${job.title} at ${job.company}`);
+              continue;
+            }
+
+            try {
+              await query(
+                `INSERT INTO jobs (
+                  title, description, category, company, location, requirements,
+                  apply_url, posted_at, is_active, job_type, country, state, city
+                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+                [
+                  job.title,
+                  job.description,
+                  null,
+                  job.company || null,
+                  job.locations || null,
+                  null,
+                  job.url,
+                  new Date(job.date),
+                  true,
+                  job_type,
+                  "United States",
+                  state,
+                  city,
+                ]
+              );
+              insertedCount++;
+              console.log(`Inserted internship job: ${job.title}`);
+            } catch (error) {
+              console.error(`Error inserting internship job ${job.title}:`, error);
+            }
+          }
+        }
+      } catch (error) {
+        console.error("Error fetching Careerjet internship jobs data:", error);
+      }
+    }
+
+    console.log(`Careerjet internship jobs import completed. Total inserted jobs: ${insertedCount}`);
+
+    res.json({ success: true, inserted: insertedCount });
+  })
+);
+
 
 // ----------------- GOOGLE CAREERS IMPORT -------------------
 router.post(

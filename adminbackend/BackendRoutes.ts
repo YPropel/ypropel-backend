@@ -83,7 +83,7 @@ router.post(
     const {
       keyword = "",
       location = "United States",
-      pages = 3,
+      pages = 6,
       job_type = "entry_level",
     } = req.body;
 

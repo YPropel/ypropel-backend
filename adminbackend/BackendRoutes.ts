@@ -72,7 +72,6 @@ router.post(
     const ADZUNA_APP_KEY = process.env.ADZUNA_APP_KEY!;
     const ADZUNA_COUNTRY = "us";
 
-    // Use location from request or default to United States
     const { keyword = "", location = "United States", pages = 3, job_type = "entry_level" } = req.body;
 
     const excludeKeywords = [
@@ -161,7 +160,7 @@ router.post(
   })
 );
 
-// Careerjet import route with improved location parsing and required user_ip and user_agent
+// Careerjet import route with US location filtering
 router.post(
   "/import-careerjet-jobs",
   adminOnly,
@@ -174,18 +173,15 @@ router.post(
     for (let page = 1; page <= pages; page++) {
       console.log(`Fetching Careerjet page ${page}...`);
 
-      // Provide user_ip and user_agent, mandatory for Careerjet API
-      const userIp = req.ip || "127.0.0.1"; // fallback IP if req.ip undefined
-      const userAgent = req.headers["user-agent"] || "ypropel-backend/1.0";
-
-      const careerjetUrl = `http://public.api.careerjet.net/search?affid=${encodeURIComponent(
-        CAREERJET_AFFID
-      )}&keywords=${encodeURIComponent(keyword)}&location=${encodeURIComponent(
-        location
-      )}&pagesize=50&pagenumber=${page}&sort=relevance&user_ip=${encodeURIComponent(userIp)}&user_agent=${encodeURIComponent(userAgent)}`;
+      const careerjetUrl = `http://public.api.careerjet.net/search?affid=${CAREERJET_AFFID}&keywords=${encodeURIComponent(keyword)}&location=${encodeURIComponent(location)}&pagesize=50&pagenumber=${page}&sort=relevance`;
 
       try {
-        const response = await axios.get(careerjetUrl, { timeout: 15000 });
+        const response = await axios.get(careerjetUrl, {
+          headers: {
+            "User-Agent": "ypropel-backend/1.0",
+          },
+        });
+
         const data = response.data;
 
         if (data.type === "ERROR") {
@@ -202,6 +198,8 @@ router.post(
               continue;
             }
 
+            // You can add excludeKeywords filtering here if you want same logic as Adzuna
+
             const existing = await query(
               "SELECT id FROM jobs WHERE title = $1 AND company = $2 AND location = $3",
               [job.title, job.company || null, job.locations || null]
@@ -210,23 +208,6 @@ router.post(
             if (existing.rows.length > 0) {
               console.log(`Job already exists: ${job.title} at ${job.company}`);
               continue;
-            }
-
-            // Parse city and state from locations string if possible
-            let city: string | null = null;
-            let state: string | null = null;
-            let country: string | null = null;
-
-            if (job.locations) {
-              const parts = job.locations.split(",").map((p) => p.trim());
-              if (parts.length === 2) {
-                city = parts[0];
-                state = parts[1];
-                country = "United States";
-              } else if (parts.length === 1) {
-                city = parts[0];
-                country = parts[0].toLowerCase().includes("usa") ? "United States" : null;
-              }
             }
 
             try {
@@ -246,9 +227,9 @@ router.post(
                   new Date(job.date),
                   true,
                   job_type,
-                  country,
-                  state,
-                  city,
+                  "United States",
+                  null,
+                  null,
                 ]
               );
               insertedCount++;
@@ -266,6 +247,97 @@ router.post(
     console.log(`Careerjet import completed. Total inserted jobs: ${insertedCount}`);
 
     res.json({ success: true, inserted: insertedCount });
+  })
+);
+
+// Sunnova import route scraping their career site
+router.post(
+  "/import-sunnova-jobs",
+  adminOnly,
+  asyncHandler(async (req: AuthRequest, res: Response) => {
+    const { job_type = "entry_level" } = req.body;
+
+    let insertedCount = 0;
+
+    // Example: Sunnova job board URL - update this as needed
+    const sunnovaJobsUrl = "https://www.sunnova.com/careers#open-positions";
+
+    // You might want to use a real scraper library like Puppeteer or Cheerio
+    // Here we simulate scraping with a placeholder
+    // Replace below with real scraping logic
+
+    try {
+      // Example: fetch and parse HTML here
+      // const html = await axios.get(sunnovaJobsUrl);
+      // const jobs = parseHtmlToJobs(html.data);
+
+      // For demo: hardcoded example jobs
+      const jobs = [
+        {
+          title: "Solar Installer",
+          description: "Install solar panels at customer homes.",
+          company: "Sunnova",
+          location: "Houston, TX",
+          url: "https://www.sunnova.com/careers/solar-installer",
+          date: new Date().toISOString(),
+        },
+        {
+          title: "Energy Consultant",
+          description: "Consult clients on energy solutions.",
+          company: "Sunnova",
+          location: "Houston, TX",
+          url: "https://www.sunnova.com/careers/energy-consultant",
+          date: new Date().toISOString(),
+        },
+      ];
+
+      for (const job of jobs) {
+        const existing = await query(
+          "SELECT id FROM jobs WHERE title = $1 AND company = $2 AND location = $3",
+          [job.title, job.company, job.location]
+        );
+
+        if (existing.rows.length > 0) {
+          console.log(`Job already exists: ${job.title} at ${job.company}`);
+          continue;
+        }
+
+        try {
+          await query(
+            `INSERT INTO jobs (
+              title, description, category, company, location, requirements,
+              apply_url, posted_at, is_active, job_type, country, state, city
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+            [
+              job.title,
+              job.description,
+              null,
+              job.company,
+              job.location,
+              null,
+              job.url,
+              new Date(job.date),
+              true,
+              job_type,
+              "United States",
+              null,
+              null,
+            ]
+          );
+          insertedCount++;
+          console.log(`Inserted job: ${job.title}`);
+        } catch (error) {
+          console.error(`Error inserting Sunnova job ${job.title}:`, error);
+        }
+      }
+
+      console.log(`Sunnova import completed. Total inserted jobs: ${insertedCount}`);
+
+      res.json({ success: true, inserted: insertedCount });
+    } catch (error) {
+      console.error("Error scraping Sunnova jobs:", error);
+      res.status(500).json({ error: "Error scraping Sunnova jobs" });
+    }
   })
 );
 

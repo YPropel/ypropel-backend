@@ -10,6 +10,7 @@ interface AuthRequest extends Request {
   user?: { userId: number; email?: string; isAdmin?: boolean };
 }
 
+// Async wrapper to catch errors
 function asyncHandler(
   fn: (req: AuthRequest, res: Response, next: NextFunction) => Promise<any>
 ) {
@@ -18,6 +19,7 @@ function asyncHandler(
   };
 }
 
+// Authentication middleware
 function authenticateToken(
   req: AuthRequest,
   res: Response,
@@ -49,6 +51,7 @@ function authenticateToken(
   });
 }
 
+// Admin-only middleware
 function adminOnly(req: AuthRequest, res: Response, next: NextFunction): void {
   if (!req.user?.isAdmin) {
     res.status(403).json({ error: "Access denied. Admins only." });
@@ -57,9 +60,29 @@ function adminOnly(req: AuthRequest, res: Response, next: NextFunction): void {
   next();
 }
 
+// Protect all routes below this middleware with authentication
 router.use(authenticateToken);
 
-// -- Adzuna import route --
+const excludeKeywords = [
+  "cook",
+  "customer support",
+  "technician",
+  "cashier",
+  "driver",
+  "security",
+  "hourly",
+  "shift supervisor",
+  "supervisor",
+  "janitor",
+  // Add more roles to exclude as needed
+];
+
+function isValidJobTitle(title: string): boolean {
+  const lowerTitle = title.toLowerCase();
+  return !excludeKeywords.some((kw) => lowerTitle.includes(kw));
+}
+
+// Admin-only import entry-level jobs route (Adzuna)
 router.post(
   "/import-entry-jobs",
   adminOnly,
@@ -68,32 +91,7 @@ router.post(
     const ADZUNA_APP_KEY = process.env.ADZUNA_APP_KEY!;
     const ADZUNA_COUNTRY = "us";
 
-    const {
-      keyword = "",
-      location = "",
-      pages = 3,
-      job_type = "entry_level",
-    } = req.body;
-
-    // Exclude some unwanted job titles
-    const excludeKeywords = [
-      "cook",
-      "customer support",
-      "technician",
-      "cashier",
-      "driver",
-      "security",
-      "hourly",
-      "shift supervisor",
-      "supervisor",
-      "janitor",
-    ];
-
-    function isValidJobTitle(title: string): boolean {
-      const lowerTitle = title.toLowerCase();
-      return !excludeKeywords.some((kw) => lowerTitle.includes(kw));
-    }
-
+    const { keyword = "", location = "", pages = 3 } = req.body; // default 3 pages
     let insertedCount = 0;
 
     for (let page = 1; page <= pages; page++) {
@@ -142,7 +140,7 @@ router.post(
               job.redirect_url,
               job.created,
               true,
-              job_type, // from request (entry_level, internship, hourly)
+              "entry_level",
               country,
               state,
               city,
@@ -150,7 +148,7 @@ router.post(
           );
           insertedCount++;
           console.log(`Inserted job: ${job.title}`);
-        } catch (error) {
+        } catch (error: unknown) {
           console.error(`Error inserting job ${job.title}:`, error);
         }
       }
@@ -162,61 +160,43 @@ router.post(
   })
 );
 
-// -- Careerjet import route --
+// Admin-only import Careerjet jobs route
 router.post(
   "/import-careerjet-jobs",
   adminOnly,
   asyncHandler(async (req: AuthRequest, res: Response) => {
     const CAREERJET_AFFID = process.env.CAREERJET_AFFID!;
-    const { keyword = "", location = "", pages = 3, job_type = "entry_level" } = req.body;
-
-    const excludeKeywords = [
-      "cook",
-      "customer support",
-      "technician",
-      "cashier",
-      "driver",
-      "security",
-      "hourly",
-      "shift supervisor",
-      "supervisor",
-      "janitor",
-    ];
-
-    function isValidJobTitle(title: string): boolean {
-      const lowerTitle = title.toLowerCase();
-      return !excludeKeywords.some((kw) => lowerTitle.includes(kw));
-    }
+    const { keyword = "", location = "", pages = 3 } = req.body;
 
     let insertedCount = 0;
 
     for (let page = 1; page <= pages; page++) {
       console.log(`Fetching Careerjet page ${page}...`);
 
-      // Compose Careerjet URL
-      const cjUrl = `https://public.api.careerjet.net/search?affid=${CAREERJET_AFFID}&keywords=${encodeURIComponent(keyword)}&location=${encodeURIComponent(location)}&pagesize=50&pagenumber=${page}&sort=relevance`;
+      // Build Careerjet URL using HTTP (not HTTPS)
+      const cjUrl = `http://public.api.careerjet.net/search?affid=${CAREERJET_AFFID}&keywords=${encodeURIComponent(keyword)}&location=${encodeURIComponent(location)}&pagesize=50&pagenumber=${page}&sort=relevance`;
 
       try {
         const response = await axios.get(cjUrl, {
           headers: {
             "User-Agent": "ypropel-backend",
-            "Accept": "application/json",
           },
+          timeout: 10000,
         });
 
-        const data = response.data;
-
-        if (data.type === "ERROR") {
-          console.error("Careerjet API error:", data.error);
-          return res.status(500).json({ success: false, error: data.error });
+        if (response.data.type === "ERROR") {
+          console.error("Careerjet API error:", response.data.error);
+          break;
         }
 
-        if (data.type !== "JOBS" || !Array.isArray(data.jobs)) {
-          console.log("No jobs found or invalid data structure");
-          continue;
+        if (response.data.type !== "JOBS" || !Array.isArray(response.data.jobs)) {
+          console.log("No jobs found or invalid response from Careerjet.");
+          break;
         }
 
-        for (const job of data.jobs) {
+        const jobs = response.data.jobs;
+
+        for (const job of jobs) {
           if (!job.title || !isValidJobTitle(job.title)) {
             console.log(`Skipped job due to excluded title: ${job.title}`);
             continue;
@@ -240,15 +220,15 @@ router.post(
               ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
               [
                 job.title,
-                job.description,
+                job.description || null,
                 null,
                 job.company || null,
                 job.locations || null,
                 null,
-                job.url,
-                new Date(job.date) || new Date(),
+                job.url || null,
+                job.date ? new Date(job.date) : new Date(),
                 true,
-                job_type, // from request (entry_level, internship, hourly)
+                "entry_level",
                 null,
                 null,
                 null,
@@ -256,12 +236,13 @@ router.post(
             );
             insertedCount++;
             console.log(`Inserted job: ${job.title}`);
-          } catch (error) {
+          } catch (error: unknown) {
             console.error(`Error inserting job ${job.title}:`, error);
           }
         }
-      } catch (error) {
-        console.error("Error fetching Careerjet jobs:", error);
+      } catch (error: unknown) {
+        console.error("Careerjet fetch error:", error);
+        break;
       }
     }
 

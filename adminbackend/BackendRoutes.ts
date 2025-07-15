@@ -203,8 +203,6 @@ router.post(
               continue;
             }
 
-            // Optional: Add exclude keywords filtering if needed here
-
             const existing = await query(
               "SELECT id FROM jobs WHERE title = $1 AND company = $2 AND location = $3",
               [job.title, job.company || null, job.locations || null]
@@ -260,22 +258,25 @@ router.post(
   "/import-google-jobs",
   adminOnly,
   asyncHandler(async (req: AuthRequest, res: Response) => {
-    const { keyword = "", location = "", pages = 3, job_type = "internship" } = req.body;
+    const { keyword = "", location = "United States", pages = 3, job_type = "entry_level" } = req.body;
+
+    const ONE_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+    const now = new Date();
 
     let insertedCount = 0;
 
     for (let page = 0; page < pages; page++) {
       const start = page * 10;
 
+      // Build Google Careers API URL
+      const filter = `location=${encodeURIComponent(location)}`;
+      const employmentType = job_type === "internship" ? "INTERN" : "FULL_TIME";
       const url = `https://careers.google.com/api/v3/search/?query=${encodeURIComponent(
         keyword
-      )}&location=${encodeURIComponent(location)}&offset=${start}&limit=10&employment_type=${
-        job_type === "internship" ? "INTERN" : "FULL_TIME"
-      }`;
+      )}&${filter}&offset=${start}&limit=10&employment_type=${employmentType}`;
 
       try {
         const response = await axios.get(url);
-
         const jobs = response.data.jobs;
 
         if (!jobs || jobs.length === 0) {
@@ -285,12 +286,25 @@ router.post(
 
         for (const job of jobs) {
           const title = job.title || "";
-          const company = "Google";
+          const company = job.company?.name || "Google";
           const locationStr =
             job.locations?.map((loc: any) => loc.name).join(", ") || "";
-          const jobUrl = `https://careers.google.com/jobs/results/${job.jobId}/`;
+          const jobUrl = job.applyUrl || `https://careers.google.com/jobs/results/${job.jobId}/`;
           const description = job.description || "";
-          const postedDate = job.postedDate ? new Date(job.postedDate) : new Date();
+          const postedDate = job.postedDate ? new Date(job.postedDate) : null;
+
+          // Skip if no posted date or older than 7 days
+          if (!postedDate || now.getTime() - postedDate.getTime() > ONE_WEEK_MS) {
+            console.log(`Skipped old or missing date job: ${title}`);
+            continue;
+          }
+
+          // Skip senior/manager/lead roles
+          const titleLower = title.toLowerCase();
+          if (titleLower.includes("senior") || titleLower.includes("manager") || titleLower.includes("lead")) {
+            console.log(`Skipped senior/manager job: ${title}`);
+            continue;
+          }
 
           // Check if job already exists
           const existing = await query(
@@ -300,6 +314,12 @@ router.post(
 
           if (existing.rows.length > 0) {
             console.log(`Job already exists: ${title} at ${company}`);
+            continue;
+          }
+
+          // Skip jobs with suspicious apply URLs
+          if (!jobUrl || jobUrl.includes("job-not-found") || jobUrl.includes("removed")) {
+            console.log(`Skipped job with invalid apply URL: ${title}`);
             continue;
           }
 

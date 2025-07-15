@@ -3531,14 +3531,20 @@ app.get(
       queryStr += ` AND jobs.country = $${params.length}`;
     }
     if (state) {
-      params.push(state);
-      params.push(state);
-      queryStr += ` AND (jobs.state = $${params.length - 1} OR LOWER(us_states.name) = LOWER($${params.length}))`;
-    }
+  params.push(state); // for jobs.state
+  params.push(state); // for us_states.name
+  const stateParam1 = params.length - 1; // index of first param (jobs.state)
+  const stateParam2 = params.length;     // index of second param (us_states.name)
+  queryStr += ` AND (jobs.state = $${stateParam1} OR LOWER(us_states.name) = LOWER($${stateParam2}))`;
+}
     if (city) {
-      params.push(city);
-      queryStr += ` AND jobs.city = $${params.length}`;
-    }
+  let cityStr = "";
+  if (typeof city === "string") {
+    cityStr = city.toLowerCase();
+  }
+  params.push(cityStr);
+  queryStr += ` AND LOWER(jobs.city) = $${params.length}`;
+}
     if (category) {
       params.push(category);
       queryStr += ` AND jobs.category = $${params.length}`;

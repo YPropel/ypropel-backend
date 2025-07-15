@@ -2992,7 +2992,7 @@ app.get("/us-states", async (req: Request, res: Response) => {
 
 //----------Get job-fair cities for the selected states to display on the dropdown-----
 // ✅ GET /us-cities?state=Texas
-app.get(
+/*app.get(
   "/us-cities",
   asyncHandler(async (req: Request, res: Response) => {
     const stateName = req.query.state as string;
@@ -3022,7 +3022,40 @@ app.get(
     const cities = cityResult.rows.map((row) => row.name);
     res.json(cities);
   })
+);*/
+
+app.get(
+  "/us-cities",
+  asyncHandler(async (req: Request, res: Response) => {
+    const stateAbbreviation = (req.query.state as string)?.trim().toUpperCase();
+
+    if (!stateAbbreviation) {
+      return res.status(400).json({ error: "Missing or invalid state abbreviation" });
+    }
+
+    // Get the ID of the state by abbreviation
+    const stateResult = await query(
+      "SELECT id FROM us_states WHERE abbreviation = $1",
+      [stateAbbreviation]
+    );
+
+    if (stateResult.rows.length === 0) {
+      return res.status(404).json({ error: "State not found" });
+    }
+
+    const stateId = stateResult.rows[0].id;
+
+    // Get cities with that state_id
+    const cityResult = await query(
+      "SELECT name FROM us_cities WHERE state_id = $1 ORDER BY name ASC",
+      [stateId]
+    );
+
+    const cities = cityResult.rows.map((row) => row.name);
+    res.json(cities);
+  })
 );
+
 
 //---------Get countries for drop downlist 
 app.get("/countries", async (req: Request, res: Response) => {

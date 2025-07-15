@@ -2969,7 +2969,7 @@ app.get("/job-fairs", async (req: Request, res: Response) => {
 //--------get US states and cities for Job fair drop down list in for Admin
 
 // ✅ GET /us-states
-app.get("/us-states", async (req: Request, res: Response) => {
+/*app.get("/us-states", async (req: Request, res: Response) => {
   try {
     const result = await query("SELECT name FROM us_states ORDER BY name ASC");
     res.json(result.rows.map((r) => r.name));
@@ -2977,7 +2977,18 @@ app.get("/us-states", async (req: Request, res: Response) => {
     console.error("Failed to fetch states:", err);
     res.status(500).json({ error: "Server error" });
   }
+});*/
+app.get("/us-states", async (req: Request, res: Response) => {
+  try {
+    const result = await query("SELECT name, abbreviation FROM us_states ORDER BY name ASC");
+    // Return an array of objects: { name, abbreviation }
+    res.json(result.rows);
+  } catch (err) {
+    console.error("Failed to fetch states:", err);
+    res.status(500).json({ error: "Server error" });
+  }
 });
+
 
 //----------Get job-fair cities for the selected states to display on the dropdown-----
 // ✅ GET /us-cities?state=Texas

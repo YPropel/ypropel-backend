@@ -63,7 +63,7 @@ function adminOnly(req: AuthRequest, res: Response, next: NextFunction): void {
 // Protect all routes below this middleware with authentication
 router.use(authenticateToken);
 
-// Adzuna import route
+// === Adzuna import route ===
 router.post(
   "/import-entry-jobs",
   adminOnly,
@@ -72,7 +72,13 @@ router.post(
     const ADZUNA_APP_KEY = process.env.ADZUNA_APP_KEY!;
     const ADZUNA_COUNTRY = "us";
 
-    const { keyword = "", location = "", pages = 3 } = req.body; // default 3 pages
+    const { keyword = "", location = "", pages = 3, jobType = "entry_level" } = req.body;
+
+    // For internships, force keyword to "internship" for better results
+    let searchKeyword = keyword;
+    if (jobType === "internship") {
+      searchKeyword = "internship";
+    }
 
     const excludeKeywords = [
       "cook",
@@ -85,6 +91,7 @@ router.post(
       "shift supervisor",
       "supervisor",
       "janitor",
+      // Add more excluded keywords as needed
     ];
 
     function isValidJobTitle(title: string): boolean {
@@ -97,7 +104,7 @@ router.post(
     for (let page = 1; page <= pages; page++) {
       console.log(`Fetching Adzuna page ${page}...`);
 
-      const adzunaUrl = `https://api.adzuna.com/v1/api/jobs/${ADZUNA_COUNTRY}/search/${page}?app_id=${ADZUNA_APP_ID}&app_key=${ADZUNA_APP_KEY}&results_per_page=50&max_days_old=30&content-type=application/json${keyword ? `&what=${encodeURIComponent(keyword)}` : ""}${location ? `&where=${encodeURIComponent(location)}` : ""}`;
+      const adzunaUrl = `https://api.adzuna.com/v1/api/jobs/${ADZUNA_COUNTRY}/search/${page}?app_id=${ADZUNA_APP_ID}&app_key=${ADZUNA_APP_KEY}&results_per_page=50&max_days_old=30&content-type=application/json${searchKeyword ? `&what=${encodeURIComponent(searchKeyword)}` : ""}${location ? `&where=${encodeURIComponent(location)}` : ""}`;
 
       const response = await axios.get(adzunaUrl);
       const jobs = response.data.results;
@@ -105,7 +112,7 @@ router.post(
 
       for (const job of jobs) {
         if (!job.title || !isValidJobTitle(job.title)) {
-          console.log(`Skipped job due to invalid title: ${job.title}`);
+          console.log(`Skipped job due to excluded title: ${job.title}`);
           continue;
         }
 
@@ -140,7 +147,7 @@ router.post(
               job.redirect_url,
               job.created,
               true,
-              "entry_level",
+              jobType,
               country,
               state,
               city,
@@ -160,55 +167,58 @@ router.post(
   })
 );
 
-// Careerjet import route
+// === Careerjet import route (you can update or extend similarly) ===
 router.post(
   "/import-careerjet-jobs",
   adminOnly,
   asyncHandler(async (req: AuthRequest, res: Response) => {
-    const affid = process.env.CAREERJET_AFFID;
-    if (!affid) {
-      return res.status(500).json({ error: "Careerjet affiliate ID (CAREERJET_AFFID) is not set" });
+    const CAREERJET_AFFID = process.env.CAREERJET_AFFID!;
+    const { keyword = "", location = "", pages = 3, jobType = "entry_level" } = req.body;
+
+    // Force keyword if internship for better match
+    let searchKeyword = keyword;
+    if (jobType === "internship") {
+      searchKeyword = "internship";
     }
-
-    const { keyword = "", location = "", pages = 3 } = req.body;
-
-    // Get user IP robustly (supports proxy headers)
-    const userIp =
-      (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
-      req.connection.remoteAddress ||
-      '8.8.8.8'; // fallback to Google DNS IP for testing
-
-    // Get user agent or fallback string
-    const userAgent = req.headers['user-agent'] || 'Mozilla/5.0';
 
     let insertedCount = 0;
 
+    // The Careerjet API is a GET request with parameters; paginate by 'pagenumber'
     for (let page = 1; page <= pages; page++) {
+      console.log(`Fetching Careerjet page ${page}...`);
+
+      const params = new URLSearchParams({
+        affid: CAREERJET_AFFID,
+        keywords: searchKeyword,
+        location,
+        pagesize: "50",
+        pagenumber: page.toString(),
+        sort: "relevance",
+      });
+
       try {
-        const url = `http://public.api.careerjet.net/search?affid=${affid}` +
-          `&keywords=${encodeURIComponent(keyword)}` +
-          `&location=${encodeURIComponent(location)}` +
-          `&pagesize=50&pagenumber=${page}&sort=relevance` +
-          `&user_ip=${encodeURIComponent(userIp)}` +
-          `&user_agent=${encodeURIComponent(userAgent)}`;
+        const response = await axios.get(`https://public.api.careerjet.net/search?${params.toString()}`, {
+          headers: {
+            "User-Agent": "YPropel-Backend-Client/1.0",
+          },
+        });
 
-        console.log(`Fetching Careerjet page ${page} with URL:`, url);
-
-        const response = await axios.get(url);
         const data = response.data;
 
-        if (data.type === 'ERROR') {
-          console.error("Careerjet API error:", data.error);
-          return res.status(500).json({ error: `Careerjet API error: ${data.error}` });
-        }
-
-        if (data.type !== 'JOBS' || !Array.isArray(data.jobs)) {
-          console.log("No jobs returned on page", page);
+        if (data.type !== "JOBS") {
+          console.log(`Careerjet response type: ${data.type}. No jobs fetched on page ${page}.`);
           continue;
         }
 
-        for (const job of data.jobs) {
-          // Simple exclude keywords filter
+        const jobs = data.jobs;
+
+        for (const job of jobs) {
+          if (!job.title || !job.company) {
+            console.log("Skipped job due to missing title or company");
+            continue;
+          }
+
+          // Optionally skip excluded titles same as Adzuna
           const excludeKeywords = [
             "cook",
             "customer support",
@@ -221,8 +231,9 @@ router.post(
             "supervisor",
             "janitor",
           ];
-          const lowerTitle = job.title?.toLowerCase() || "";
-          if (excludeKeywords.some(kw => lowerTitle.includes(kw))) {
+
+          const lowerTitle = job.title.toLowerCase();
+          if (excludeKeywords.some((kw) => lowerTitle.includes(kw))) {
             console.log(`Skipped job due to excluded title: ${job.title}`);
             continue;
           }
@@ -241,8 +252,8 @@ router.post(
             await query(
               `INSERT INTO jobs (
                 title, description, category, company, location, requirements,
-                apply_url, posted_at, is_active, job_type
-              ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+                apply_url, posted_at, is_active, job_type, country, state, city
+              ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
               [
                 job.title,
                 job.description || null,
@@ -251,9 +262,12 @@ router.post(
                 job.locations || null,
                 null,
                 job.url || null,
-                job.date ? new Date(job.date) : new Date(),
+                job.date || null,
                 true,
-                "entry_level",
+                jobType,
+                null,
+                null,
+                null,
               ]
             );
             insertedCount++;
@@ -264,7 +278,6 @@ router.post(
         }
       } catch (error) {
         console.error(`Error fetching Careerjet page ${page}:`, error);
-        return res.status(500).json({ error: `Failed to fetch Careerjet jobs: ${error}` });
       }
     }
 

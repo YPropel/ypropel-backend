@@ -63,7 +63,7 @@ function adminOnly(req: AuthRequest, res: Response, next: NextFunction): void {
 // Protect all routes below this middleware with authentication
 router.use(authenticateToken);
 
-// Adzuna import route with US location filtering
+// ----------------- ADZUNA IMPORT -------------------
 router.post(
   "/import-entry-jobs",
   adminOnly,
@@ -72,7 +72,12 @@ router.post(
     const ADZUNA_APP_KEY = process.env.ADZUNA_APP_KEY!;
     const ADZUNA_COUNTRY = "us";
 
-    const { keyword = "", location = "United States", pages = 3, job_type = "entry_level" } = req.body;
+    const {
+      keyword = "",
+      location = "United States",
+      pages = 3,
+      job_type = "entry_level",
+    } = req.body;
 
     const excludeKeywords = [
       "cook",
@@ -160,7 +165,7 @@ router.post(
   })
 );
 
-// Careerjet import route with US location filtering
+// ----------------- CAREERJET IMPORT -------------------
 router.post(
   "/import-careerjet-jobs",
   adminOnly,
@@ -198,7 +203,7 @@ router.post(
               continue;
             }
 
-            // You can add excludeKeywords filtering here if you want same logic as Adzuna
+            // Optional: Add exclude keywords filtering if needed here
 
             const existing = await query(
               "SELECT id FROM jobs WHERE title = $1 AND company = $2 AND location = $3",
@@ -250,94 +255,90 @@ router.post(
   })
 );
 
-// Sunnova import route scraping their career site
+// ----------------- GOOGLE CAREERS IMPORT -------------------
 router.post(
-  "/import-sunnova-jobs",
+  "/import-google-jobs",
   adminOnly,
   asyncHandler(async (req: AuthRequest, res: Response) => {
-    const { job_type = "entry_level" } = req.body;
+    const { keyword = "", location = "", pages = 3, job_type = "internship" } = req.body;
 
     let insertedCount = 0;
 
-    // Example: Sunnova job board URL - update this as needed
-    const sunnovaJobsUrl = "https://www.sunnova.com/careers#open-positions";
+    for (let page = 0; page < pages; page++) {
+      const start = page * 10;
 
-    // You might want to use a real scraper library like Puppeteer or Cheerio
-    // Here we simulate scraping with a placeholder
-    // Replace below with real scraping logic
+      const url = `https://careers.google.com/api/v3/search/?query=${encodeURIComponent(
+        keyword
+      )}&location=${encodeURIComponent(location)}&offset=${start}&limit=10&employment_type=${
+        job_type === "internship" ? "INTERN" : "FULL_TIME"
+      }`;
 
-    try {
-      // Example: fetch and parse HTML here
-      // const html = await axios.get(sunnovaJobsUrl);
-      // const jobs = parseHtmlToJobs(html.data);
+      try {
+        const response = await axios.get(url);
 
-      // For demo: hardcoded example jobs
-      const jobs = [
-        {
-          title: "Solar Installer",
-          description: "Install solar panels at customer homes.",
-          company: "Sunnova",
-          location: "Houston, TX",
-          url: "https://www.sunnova.com/careers/solar-installer",
-          date: new Date().toISOString(),
-        },
-        {
-          title: "Energy Consultant",
-          description: "Consult clients on energy solutions.",
-          company: "Sunnova",
-          location: "Houston, TX",
-          url: "https://www.sunnova.com/careers/energy-consultant",
-          date: new Date().toISOString(),
-        },
-      ];
+        const jobs = response.data.jobs;
 
-      for (const job of jobs) {
-        const existing = await query(
-          "SELECT id FROM jobs WHERE title = $1 AND company = $2 AND location = $3",
-          [job.title, job.company, job.location]
-        );
-
-        if (existing.rows.length > 0) {
-          console.log(`Job already exists: ${job.title} at ${job.company}`);
-          continue;
+        if (!jobs || jobs.length === 0) {
+          console.log(`No jobs found on Google Careers page ${page + 1}`);
+          break;
         }
 
-        try {
-          await query(
-            `INSERT INTO jobs (
-              title, description, category, company, location, requirements,
-              apply_url, posted_at, is_active, job_type, country, state, city
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
-            [
-              job.title,
-              job.description,
-              null,
-              job.company,
-              job.location,
-              null,
-              job.url,
-              new Date(job.date),
-              true,
-              job_type,
-              "United States",
-              null,
-              null,
-            ]
+        for (const job of jobs) {
+          const title = job.title || "";
+          const company = "Google";
+          const locationStr =
+            job.locations?.map((loc: any) => loc.name).join(", ") || "";
+          const jobUrl = `https://careers.google.com/jobs/results/${job.jobId}/`;
+          const description = job.description || "";
+          const postedDate = job.postedDate ? new Date(job.postedDate) : new Date();
+
+          // Check if job already exists
+          const existing = await query(
+            "SELECT id FROM jobs WHERE title = $1 AND company = $2 AND location = $3",
+            [title, company, locationStr]
           );
-          insertedCount++;
-          console.log(`Inserted job: ${job.title}`);
-        } catch (error) {
-          console.error(`Error inserting Sunnova job ${job.title}:`, error);
+
+          if (existing.rows.length > 0) {
+            console.log(`Job already exists: ${title} at ${company}`);
+            continue;
+          }
+
+          try {
+            await query(
+              `INSERT INTO jobs (
+                title, description, category, company, location, requirements,
+                apply_url, posted_at, is_active, job_type, country, state, city
+              ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+              [
+                title,
+                description,
+                null,
+                company,
+                locationStr,
+                null,
+                jobUrl,
+                postedDate,
+                true,
+                job_type,
+                "United States",
+                null,
+                null,
+              ]
+            );
+            insertedCount++;
+            console.log(`Inserted job: ${title}`);
+          } catch (err) {
+            console.error(`Error inserting job ${title}:`, err);
+          }
         }
+      } catch (error) {
+        console.error(`Error fetching Google Careers page ${page + 1}:`, error);
+        return res.status(500).json({ error: "Failed to fetch jobs from Google Careers" });
       }
-
-      console.log(`Sunnova import completed. Total inserted jobs: ${insertedCount}`);
-
-      res.json({ success: true, inserted: insertedCount });
-    } catch (error) {
-      console.error("Error scraping Sunnova jobs:", error);
-      res.status(500).json({ error: "Error scraping Sunnova jobs" });
     }
+
+    console.log(`Google Careers import completed. Total inserted jobs: ${insertedCount}`);
+    res.json({ success: true, inserted: insertedCount });
   })
 );
 

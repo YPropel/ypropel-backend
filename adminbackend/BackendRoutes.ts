@@ -183,7 +183,7 @@ router.post(
     // Normalize inputs
     const keyword = toSingleString(req.body.keyword) || "";
     const location = toSingleString(req.body.location) || "United States";
-    const pages = Number(req.body.pages) || 3;
+    const pages = Number(req.body.pages) || 10; // increased default pages to 10
     const job_type = toSingleString(req.body.job_type) || "entry_level";
 
     // User ID check (optional, depending on your app logic)
@@ -221,6 +221,85 @@ router.post(
       "analyst",
       "developer",
       "consultant",
+      "marketing",
+      "sales",
+      "business analyst",
+      "quality assurance",
+      "qa",
+      "researcher",
+      "designer",
+      "project manager",
+      "operations",
+      "human resources",
+      "hr",
+      "recruiter",
+      "legal",
+      "compliance",
+      "audit",
+      "controller",
+      "tax",
+      "strategy",
+      "planner",
+      "administrator",
+      "executive assistant",
+      "account manager",
+      "customer success",
+      "content writer",
+      "copywriter",
+      "public relations",
+      "communications",
+      "trainer",
+      "product owner",
+      "scrum master",
+      "software engineer",
+      "business development",
+      "ux designer",
+      "ui designer",
+      "graphic designer",
+      "digital marketing",
+      "social media",
+      "information security",
+      "network engineer",
+      "system administrator",
+      "database administrator",
+      "cloud engineer",
+      "financial analyst",
+      "risk analyst",
+      "portfolio manager",
+      "operations manager",
+      "supply chain",
+      "logistics",
+      "procurement",
+      "technical writer",
+      "event coordinator",
+      "content strategist",
+      "brand manager",
+      "accountant",
+      "tax specialist",
+      "payroll",
+      "business intelligence",
+      "data analyst",
+      "machine learning engineer",
+      "ai engineer",
+      "software developer",
+      "devops engineer",
+      "product specialist",
+      "corporate trainer",
+      "customer service manager",
+      "marketing coordinator",
+      "office manager",
+      "financial controller",
+      "investment analyst",
+      "credit analyst",
+      "legal assistant",
+      "paralegal",
+      "corporate communications",
+      "editor",
+      "auditor",
+      "compliance officer",
+      "market researcher",
+      "quality control",
+      "procurement specialist",
     ];
 
     function containsKeyword(text: string, keywords: string[]): boolean {
@@ -272,6 +351,11 @@ router.post(
               continue;
             }
 
+            // Parse city and state from job.locations string
+            const locParts = (job.locations || "").split(",").map((s: string) => s.trim());
+            const city = locParts[0] || null;
+            const state = locParts[1] || null;
+
             const existing = await query(
               "SELECT id FROM jobs WHERE title = $1 AND company = $2 AND location = $3",
               [job.title, job.company || null, job.locations || null]
@@ -300,8 +384,8 @@ router.post(
                   true,
                   job_type,
                   "United States",
-                  null,
-                  null,
+                  state,
+                  city,
                 ]
               );
               insertedCount++;
@@ -322,6 +406,7 @@ router.post(
     res.json({ success: true, inserted: insertedCount });
   })
 );
+
 
 // ----------------- GOOGLE CAREERS IMPORT -------------------
 router.post(

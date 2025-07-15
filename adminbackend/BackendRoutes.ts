@@ -198,6 +198,36 @@ router.post(
     const userIp = req.ip || (req.headers["x-forwarded-for"] as string) || "8.8.8.8";
     const userAgent = req.headers["user-agent"] || "ypropel-backend/1.0";
 
+    // Define exclude and include keywords for filtering
+    const excludeKeywords = [
+      "technician",
+      "shift",
+      "customer service",
+      "hourly",
+      "cook",
+      "nurse",
+    ];
+
+    const includeKeywords = [
+      "engineer",
+      "software",
+      "product manager",
+      "finance",
+      "accounting",
+      "architect",
+      "data science",
+      "cyber security",
+      "cybersecurity",
+      "analyst",
+      "developer",
+      "consultant",
+    ];
+
+    function containsKeyword(text: string, keywords: string[]): boolean {
+      const lowerText = text.toLowerCase();
+      return keywords.some((kw) => lowerText.includes(kw));
+    }
+
     for (let page = 1; page <= pages; page++) {
       console.log(`Fetching Careerjet page ${page}...`);
 
@@ -227,6 +257,18 @@ router.post(
           for (const job of data.jobs) {
             if (!job.title) {
               console.log("Skipped job with missing title");
+              continue;
+            }
+
+            // Exclude if title contains any exclude keywords
+            if (containsKeyword(job.title, excludeKeywords)) {
+              console.log(`Excluded job by exclude keyword: ${job.title}`);
+              continue;
+            }
+
+            // Include only if title contains at least one include keyword
+            if (!containsKeyword(job.title, includeKeywords)) {
+              console.log(`Skipped job - does not match include keywords: ${job.title}`);
               continue;
             }
 
@@ -552,7 +594,5 @@ router.post(
     }
   })
 );
-
-
 
 export default router;

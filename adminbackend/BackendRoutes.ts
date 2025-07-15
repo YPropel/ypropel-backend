@@ -161,7 +161,7 @@ router.post(
   })
 );
 
-// Careerjet import route with US location filtering
+// Careerjet import route with required user_ip and user_agent params
 router.post(
   "/import-careerjet-jobs",
   adminOnly,
@@ -174,16 +174,18 @@ router.post(
     for (let page = 1; page <= pages; page++) {
       console.log(`Fetching Careerjet page ${page}...`);
 
-      const careerjetUrl = `http://public.api.careerjet.net/search?affid=${CAREERJET_AFFID}&keywords=${encodeURIComponent(keyword)}&location=${encodeURIComponent(location)}&pagesize=50&pagenumber=${page}&sort=relevance`;
+      // Required parameters user_ip and user_agent for Careerjet API
+      const userIp = "127.0.0.1"; // or your server IP
+      const userAgent = "ypropel-backend/1.0";
+
+      const careerjetUrl = `http://public.api.careerjet.net/search?affid=${encodeURIComponent(
+        CAREERJET_AFFID
+      )}&keywords=${encodeURIComponent(keyword)}&location=${encodeURIComponent(
+        location
+      )}&pagesize=50&pagenumber=${page}&sort=relevance&user_ip=${encodeURIComponent(userIp)}&user_agent=${encodeURIComponent(userAgent)}`;
 
       try {
-        const response = await axios.get(careerjetUrl, {
-          headers: {
-            "User-Agent": "ypropel-backend/1.0",
-            // Add your own user-agent string here
-          },
-        });
-
+        const response = await axios.get(careerjetUrl, { timeout: 15000 });
         const data = response.data;
 
         if (data.type === "ERROR") {

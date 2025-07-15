@@ -366,51 +366,56 @@ router.post(
 
     let insertedCount = 0;
 
-    for (let page = 1; page <= pages; page++) {
-      console.log(`Fetching Tesla jobs page ${page}...`);
+    for (let page = 0; page < pages; page++) {
+      console.log(`Fetching Tesla jobs page ${page + 1}...`);
 
       try {
-        // Tesla API expects POST with JSON body for filters and pagination
         const response = await axios.post("https://www.tesla.com/careers/api/v1/search", {
           filters: {
-            keywords: keyword,
-            location: location,
-            // Tesla API does not have direct job_type filtering; you can filter client-side by title or description
+            keywords: keyword || "",
+            location: location || "",
           },
           page: page,
           pageSize: 50,
         });
 
-        const jobs = response.data.data;
+        console.log("Tesla response data sample:", JSON.stringify(response.data, null, 2));
 
-        if (!jobs || jobs.length === 0) {
-          console.log(`No Tesla jobs found on page ${page}`);
+        const jobs = response.data.data || [];
+
+        if (!jobs.length) {
+          console.log(`No Tesla jobs found on page ${page + 1}`);
           break;
         }
 
         for (const job of jobs) {
+          console.log("Tesla job item:", job);
+
           const title = job.title || "";
           const company = "Tesla";
           const locationStr = job.location || location;
           const jobUrl = `https://www.tesla.com/careers/job/${job.id}`;
           const description = job.description || "";
-          const postedDate = job.postedDate ? new Date(job.postedDate) : new Date();
+          const postedDate = job.postedDate ? new Date(job.postedDate) : null;
 
-          // Skip senior roles (optional)
+          if (!postedDate) {
+            console.log(`Tesla job missing postedDate, skipping: ${title}`);
+            continue; // or accept, your choice
+          }
+
           const titleLower = title.toLowerCase();
           if (titleLower.includes("senior") || titleLower.includes("manager") || titleLower.includes("lead")) {
-            console.log(`Skipped senior/manager job: ${title}`);
+            console.log(`Skipped senior/manager Tesla job: ${title}`);
             continue;
           }
 
-          // Check if job already exists
           const existing = await query(
             "SELECT id FROM jobs WHERE title = $1 AND company = $2 AND location = $3",
             [title, company, locationStr]
           );
 
           if (existing.rows.length > 0) {
-            console.log(`Job already exists: ${title} at ${company}`);
+            console.log(`Tesla job already exists: ${title} at ${company}`);
             continue;
           }
 
@@ -443,7 +448,7 @@ router.post(
           }
         }
       } catch (error) {
-        console.error(`Error fetching Tesla jobs page ${page}:`, error);
+        console.error(`Error fetching Tesla jobs page ${page + 1}:`, error);
         return res.status(500).json({ error: "Failed to fetch jobs from Tesla Careers" });
       }
     }
@@ -452,6 +457,7 @@ router.post(
     res.json({ success: true, inserted: insertedCount });
   })
 );
+
 
 
 export default router;

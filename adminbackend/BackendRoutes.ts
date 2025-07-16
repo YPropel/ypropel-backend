@@ -568,9 +568,14 @@ router.post(
     const urlParams = new URLSearchParams();
     urlParams.append("q", q);
     if (location) urlParams.append("l", location);
-    const rssUrl = `${baseUrl}?${urlParams.toString()}`;
+    
+    
+    const rssUrl = req.body.rssUrl;
+if (!rssUrl) {
+  return res.status(400).json({ error: "rssUrl parameter is required." });
+}
+const feed = await parser.parseURL(rssUrl);
 
-    const feed = await parser.parseURL(rssUrl);
 
     // Fetch valid categories from DB once
     const validCategories = await fetchJobCategories();

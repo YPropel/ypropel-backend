@@ -3803,7 +3803,59 @@ app.get("/articles/:id", asyncHandler(async (req: Request, res: Response) => {
 
   res.json(result.rows[0]);
 }));
+//-------routes to add like button to articles---
+// POST /articles/:id/like - Like an article
+app.post('/articles/:id/like', authenticateToken, asyncHandler(async (req: AuthRequest, res: Response) => {
+  const articleId = parseInt(req.params.id);
+  const userId = req.user!.userId;
 
+  // Insert like if not already liked
+  await query(
+    `INSERT INTO article_likes (article_id, user_id)
+     VALUES ($1, $2)
+     ON CONFLICT (article_id, user_id) DO NOTHING`,
+    [articleId, userId]
+  );
+
+  res.json({ success: true });
+}));
+
+// DELETE /articles/:id/like - Unlike an article
+app.delete('/articles/:id/like', authenticateToken, asyncHandler(async (req: AuthRequest, res: Response) => {
+  const articleId = parseInt(req.params.id);
+  const userId = req.user!.userId;
+
+  await query(
+    `DELETE FROM article_likes WHERE article_id = $1 AND user_id = $2`,
+    [articleId, userId]
+  );
+
+  res.json({ success: true });
+}));
+
+// GET /articles/:id/likes - Get total likes count and whether current user liked
+app.get('/articles/:id/likes', authenticateToken, asyncHandler(async (req: AuthRequest, res: Response) => {
+  const articleId = parseInt(req.params.id);
+  const userId = req.user!.userId;
+
+  const totalLikesResult = await query(
+    `SELECT COUNT(*) AS total FROM article_likes WHERE article_id = $1`,
+    [articleId]
+  );
+
+  const userLikedResult = await query(
+    `SELECT 1 FROM article_likes WHERE article_id = $1 AND user_id = $2`,
+    [articleId, userId]
+  );
+
+  res.json({
+    totalLikes: parseInt(totalLikesResult.rows[0].total, 10),
+    userLiked: userLikedResult.rows.length > 0,
+  });
+}));
+
+
+//---------------------------
 
 
 //------------------------END of Admin BackEnd routes----------------------------

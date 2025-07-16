@@ -3,6 +3,11 @@ import jwt from "jsonwebtoken";
 import axios from "axios";
 import { query } from "../db";
 
+import Parser from "rss-parser";
+
+const parser = new Parser();
+
+
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || "your_jwt_secret_key";
 
@@ -541,5 +546,120 @@ router.post(
 );
 
 // --- Other existing routes unchanged ---
+
+// ----------------- SIMPLYHIRED IMPORT -------------------
+router.post(
+  "/import-simplyhired-jobs",
+  adminOnly,
+  asyncHandler(async (req: AuthRequest, res: Response) => {
+    const parser = new Parser();
+    const { q = "software engineer", location = "" } = req.body;
+
+    // Construct SimplyHired RSS feed URL - update as needed
+    const baseUrl = "https://www.simplyhired.com/search/rss";
+    const urlParams = new URLSearchParams();
+    urlParams.append("q", q);
+    if (location) urlParams.append("l", location);
+    const rssUrl = `${baseUrl}?${urlParams.toString()}`;
+
+    const feed = await parser.parseURL(rssUrl);
+
+    // Fetch valid categories from DB once
+    const validCategories = await fetchJobCategories();
+
+    let inserted = 0;
+    let updated = 0;
+
+    for (const item of feed.items) {
+      const sourceJobId = item.guid || item.link || "";
+
+      if (!sourceJobId) continue;
+
+      // Check if job already exists
+      const existing = await query(
+        "SELECT id FROM jobs WHERE source_job_id = $1 LIMIT 1",
+        [sourceJobId]
+      );
+
+      // Map category from feed item categories or infer from title
+      const categoryName = item.categories && item.categories.length > 0 ? item.categories[0] : "";
+     let categoryId: string | null = null;
+
+      if (categoryName) {
+        categoryId = await query(
+          "SELECT id FROM job_categories WHERE LOWER(name) = LOWER($1) LIMIT 1",
+          [categoryName.trim()]
+        ).then(res => (res.rows.length > 0 ? res.rows[0].id : null));
+      }
+      if (!categoryId) {
+        // fallback: infer category from title
+        const inferred = inferCategoryFromTitle(item.title || "");
+        categoryId = mapCategoryToValid(inferred, validCategories);
+      }
+
+      // Simple location inference
+      let jobLocation = "onsite";
+      const textToCheck = `${item.title} ${item.contentSnippet}`.toLowerCase();
+      if (textToCheck.includes("remote")) jobLocation = "remote";
+      else if (textToCheck.includes("hybrid")) jobLocation = "hybrid";
+
+      const jobData = {
+        title: item.title || "",
+        description: item.content || "",
+        category: categoryId,
+        company: item.creator || item["dc:creator"] || "Unknown",
+        location: jobLocation,
+        requirements: "",
+        apply_url: item.link || "",
+        posted_by: req.user?.userId || 1,
+        posted_at: item.pubDate ? new Date(item.pubDate) : new Date(),
+        is_active: true,
+        expires_at: null,
+        salary: "",
+        job_type: "",
+        country: "",
+        state: "",
+        city: "",
+        source_job_id: sourceJobId,
+      };
+
+      if (existing.rows.length === 0) {
+        await query(
+          `INSERT INTO jobs (
+            title, description, category, company, location, requirements,
+            apply_url, posted_by, posted_at, is_active, expires_at, salary, job_type,
+            country, state, city, source_job_id
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+          [
+            jobData.title,
+            jobData.description,
+            jobData.category,
+            jobData.company,
+            jobData.location,
+            jobData.requirements,
+            jobData.apply_url,
+            jobData.posted_by,
+            jobData.posted_at,
+            jobData.is_active,
+            jobData.expires_at,
+            jobData.salary,
+            jobData.job_type,
+            jobData.country,
+            jobData.state,
+            jobData.city,
+            jobData.source_job_id,
+          ]
+        );
+        inserted++;
+      } else {
+        // Optionally update existing record here
+        updated++;
+      }
+    }
+
+    res.json({ message: `SimplyHired import complete. Inserted: ${inserted}, Updated: ${updated}` });
+  })
+);
+
 
 export default router;

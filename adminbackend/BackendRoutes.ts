@@ -5,7 +5,12 @@ import { query } from "../db";
 
 import Parser from "rss-parser";
 
-const parser = new Parser();
+const parser = new Parser({
+  headers: {
+    "User-Agent": "Mozilla/5.0 (compatible; YPropelBot/1.0; +https://yourdomain.com)"
+  }
+});
+
 
 
 const router = express.Router();

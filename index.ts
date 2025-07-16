@@ -3779,12 +3779,25 @@ app.delete(
 app.get(
   "/articles",
   asyncHandler(async (req: Request, res: Response) => {
-    const result = await query(
-      "SELECT id, title, cover_image, content FROM articles ORDER BY published_at DESC"
-    );
+    const result = await query(`
+      SELECT 
+        a.id, 
+        a.title, 
+        a.cover_image, 
+        a.content,
+        COALESCE(l.likes_count, 0) AS total_likes
+      FROM articles a
+      LEFT JOIN (
+        SELECT article_id, COUNT(*) AS likes_count
+        FROM article_likes
+        GROUP BY article_id
+      ) l ON a.id = l.article_id
+      ORDER BY a.published_at DESC
+    `);
     res.json(result.rows);
   })
 );
+
 
 
 //----------Get and display individual  article page

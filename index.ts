@@ -3805,7 +3805,7 @@ app.get("/articles/:id", asyncHandler(async (req: Request, res: Response) => {
 }));
 //-------routes to add like button to articles---
 // POST /articles/:id/like - Like an article
-app.post('/articles/:id/like', authenticateToken, asyncHandler(async (req: AuthRequest, res: Response) => {
+app.post('/articles/:id/like', authenticateToken, asyncHandler(async (req: Request, res: Response) => {
   const articleId = parseInt(req.params.id);
   const userId = req.user!.userId;
 
@@ -3821,7 +3821,7 @@ app.post('/articles/:id/like', authenticateToken, asyncHandler(async (req: AuthR
 }));
 
 // DELETE /articles/:id/like - Unlike an article
-app.delete('/articles/:id/like', authenticateToken, asyncHandler(async (req: AuthRequest, res: Response) => {
+app.delete('/articles/:id/like', authenticateToken, asyncHandler(async (req: Request, res: Response) => {
   const articleId = parseInt(req.params.id);
   const userId = req.user!.userId;
 
@@ -3834,7 +3834,7 @@ app.delete('/articles/:id/like', authenticateToken, asyncHandler(async (req: Aut
 }));
 
 // GET /articles/:id/likes - Get total likes count and whether current user liked
-app.get('/articles/:id/likes', authenticateToken, asyncHandler(async (req: AuthRequest, res: Response) => {
+app.get('/articles/:id/likes', authenticateToken, asyncHandler(async (req: Request, res: Response) => {
   const articleId = parseInt(req.params.id);
   const userId = req.user!.userId;
 

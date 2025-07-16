@@ -727,7 +727,8 @@ app.get(
     res.json(result.rows);
   })
 );
-//---------------NEws and updates-------
+//-------------Admin News and updates-------
+// GET news - no changes needed if table has url column
 app.get("/news", async (req: Request, res: Response) => {
   try {
     const result = await query("SELECT * FROM news ORDER BY created_at DESC");
@@ -737,10 +738,11 @@ app.get("/news", async (req: Request, res: Response) => {
   }
 });
 
-//-------------------------
+// POST news - add url field support
 app.post("/news", (req: Request, res: Response): void => {
   (async () => {
-    const { title, content, image_url } = req.body;
+    const { title, content, image_url, url } = req.body;
+
     if (!title || !content) {
       res.status(400).json({ error: "Missing title or content" });
       return;
@@ -748,8 +750,8 @@ app.post("/news", (req: Request, res: Response): void => {
 
     try {
       await query(
-        "INSERT INTO news (title, content, image_url) VALUES ($1, $2, $3)",
-        [title, content, image_url || null]
+        "INSERT INTO news (title, content, image_url, url) VALUES ($1, $2, $3, $4)",
+        [title, content, image_url || null, url || null]
       );
       res.status(201).json({ message: "News added successfully" });
     } catch (err) {

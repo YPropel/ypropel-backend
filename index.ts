@@ -1463,7 +1463,15 @@ for (const row of upvoteCountsResult.rows) {
 
     const likedTopicIds = new Set(likesResult.rows.map((r) => r.topic_id));
     const followedTopicIds = new Set(followsResult.rows.map((r) => r.topic_id));
-
+const likesCountResult = await query(`
+  SELECT topic_id, COUNT(*) AS count
+  FROM discussion_likes
+  GROUP BY topic_id
+`);
+const likesCountMap: { [key: number]: number } = {};
+for (const row of likesCountResult.rows) {
+  likesCountMap[row.topic_id] = parseInt(row.count, 10);
+}
     const enrichedTopics = topicsResult.rows.map((topic) => ({
       id: topic.id,
        title: topic.title,      
@@ -1471,9 +1479,11 @@ for (const row of upvoteCountsResult.rows) {
       authorId: topic.user_id,
       createdAt: topic.created_at,
       author: topic.author_name,
-      likes: topic.likes || 0,
+       likes: likesCountMap[topic.id] || 0, 
       shares: topic.shares || 0,
       liked: likedTopicIds.has(topic.id),
+      upvotes: upvoteCountsMap[topic.id] || 0,
+upvoted: upvotedTopicIds.has(topic.id),
       followed: followedTopicIds.has(topic.id),
       comments: commentsByTopicId[topic.id] || [],
     }));

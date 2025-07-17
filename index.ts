@@ -1386,7 +1386,7 @@ app.get(
   authenticateToken,
   asyncHandler(async (req: Request, res: Response) => {
 
-    console.log("GET /discussion_topics called");
+    console.log("alloooooooooooooooooo");
     const userId = req.user?.userId;
     
     
@@ -1461,9 +1461,7 @@ const upvotedTopicIds = new Set(upvotesResult.rows.map((r) => r.topic_id));
       likeCounts[row.topic_id] = parseInt(row.like_count, 10);
     }
 
-    
-
-
+  
     // ✅ 6. Merge everything into enriched topic objects
     const enrichedTopics = topicsResult.rows.map((topic) => ({
   id: topic.id,
@@ -1481,7 +1479,7 @@ const upvotedTopicIds = new Set(upvotesResult.rows.map((r) => r.topic_id));
   authorId: topic.user_id, 
 }));
 
-
+ console.log("alloooooooooooooooooo22222");
     // ✅ 7. Return to frontend
     res.json(enrichedTopics);
   })

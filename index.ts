@@ -535,28 +535,21 @@ app.post(
       const userId = req.user?.userId;
       if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
-      let { content } = req.body;
-
-      // Ensure content is a string, trim spaces, or set to empty string
-      if (typeof content !== "string") {
-        content = "";
-      } else {
-        content = content.trim();
-      }
+      const { content } = req.body;
 
       const files = req.files as { [fieldname: string]: Express.Multer.File[] };
       const imageFile = files?.image?.[0];
       const videoFile = files?.video?.[0];
 
-      const imageUrl = imageFile?.path || null;
-      const videoUrl = videoFile?.path || null;
+      // Log files nicely
+      //console.log("Image File:----->", JSON.stringify(imageFile, null, 2));
+      //console.log("Video File:----->", JSON.stringify(videoFile, null, 2));
 
-      console.log("content:", JSON.stringify(content));
-      console.log("content length:", content.length);
-      console.log("imageUrl:", imageUrl);
-      console.log("videoUrl:", videoUrl);
+      const imageUrl = imageFile ? imageFile.path : null;
+      const videoUrl = videoFile ? videoFile.path : null;
 
-      if (!content && !imageUrl && !videoUrl) {
+      if (!content && !imageFile && !videoFile) {
+        console.error("⚠️ Post rejected: missing content and media.");
         return res.status(400).json({ error: "Post must contain content or media." });
       }
 
@@ -564,16 +557,17 @@ app.post(
         `INSERT INTO posts (user_id, content, image_url, video_url, created_at)
          VALUES ($1, $2, $3, $4, NOW())
          RETURNING id, user_id AS authorId, content, image_url AS imageUrl, video_url AS videoUrl, created_at`,
-        [userId, content, imageUrl, videoUrl]
+        [userId, content || "", imageUrl, videoUrl]
       );
 
+      //console.log("✅ Post inserted:", result.rows[0]);
       res.status(201).json(result.rows[0]);
     } catch (error) {
       console.error("❌ Error inserting post:", error);
       res.status(500).json({ error: "Failed to create post" });
     }
   })
-);
+); 
 
 
 //----- PUT update a post by ID (protected)

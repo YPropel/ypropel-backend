@@ -1468,6 +1468,7 @@ for (const row of upvoteCountsResult.rows) {
       id: topic.id,
        title: topic.title,      
       topic: topic.topic,
+      authorId: topic.user_id,
       createdAt: topic.created_at,
       author: topic.author_name,
       likes: topic.likes || 0,

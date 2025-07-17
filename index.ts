@@ -1888,6 +1888,37 @@ for (const row of upvoteCountsResult.rows) {
   })
 );
 
+//--------allow user to delete comment
+app.delete(
+  "/discussion_topics/comments/:commentId",
+  authenticateToken,
+  asyncHandler(async (req: Request, res: Response) => {
+    const commentId = parseInt(req.params.commentId, 10);
+    const userId = req.user?.userId;
+
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    if (isNaN(commentId)) return res.status(400).json({ error: "Invalid comment ID" });
+
+    // Check ownership
+    const commentCheck = await query(
+      "SELECT user_id FROM discussion_comments WHERE id = $1",
+      [commentId]
+    );
+
+    if (commentCheck.rows.length === 0) {
+      return res.status(404).json({ error: "Comment not found" });
+    }
+
+    if (commentCheck.rows[0].user_id !== userId) {
+      return res.status(403).json({ error: "Forbidden: You can only delete your own comments" });
+    }
+
+    // Delete comment
+    await query("DELETE FROM discussion_comments WHERE id = $1", [commentId]);
+
+    res.json({ message: "Comment deleted successfully" });
+  })
+);
 
 // -------- Get user by ID (protected) --------
 //-- Before new edit profile

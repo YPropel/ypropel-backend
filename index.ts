@@ -1473,7 +1473,7 @@ const upvotedTopicIds = new Set(upvotesResult.rows.map((r) => r.topic_id));
   followed: followedTopicIds.has(topic.id),
   upvoted: upvotedTopicIds.has(topic.id),
   comments: commentsByTopicId[topic.id] || [],
-  authorId: topic.userid, 
+  authorId: topic.user_id, 
 }));
 
 

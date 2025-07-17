@@ -1278,6 +1278,7 @@ app.post(
       topic: newTopic.topic,
       createdAt: newTopic.created_at,
       author: authorName,
+      authorId: userId,
       liked: false,
       followed: false,
       upvoted: false,

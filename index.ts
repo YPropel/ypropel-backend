@@ -1387,8 +1387,10 @@ app.get(
   asyncHandler(async (req: Request, res: Response) => {
     const userId = req.user?.userId;
     
+    
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
+    
     // ✅ 1. Get topics with author names
     const topicsResult = await query(
       `SELECT dt.id, dt.user_id, dt.title, dt.topic, dt.created_at,
@@ -1398,6 +1400,7 @@ app.get(
        JOIN users u ON dt.user_id = u.id
        ORDER BY dt.created_at DESC`
     );
+console.log(topicsResult.rows.map(t => ({ id: t.id, user_id: t.user_id })));
 
 //--get upvotes--
     const upvotesResult = await query(

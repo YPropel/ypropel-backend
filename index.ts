@@ -1241,7 +1241,106 @@ app.get(
 
 //---------------------------------------------
 // --------------Discussion Topics route---------------
+
+//--Get All discussion topics---
+// ✅ GET discussion topics with author, comments, likes, follows
+app.get(
+  "/discussion_topics",
+  authenticateToken,
+  asyncHandler(async (req: Request, res: Response) => {
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+
+    // ✅ 1. Get topics with authorId alias
+    const topicsResult = await query(
+      `SELECT dt.id, dt.user_id AS authorId, dt.title, dt.topic, dt.created_at,
+              u.name AS author_name,
+              (SELECT COUNT(*) FROM discussion_upvotes du WHERE du.topic_id = dt.id) AS upvotes,
+              dt.shares
+       FROM discussion_topics dt
+       JOIN users u ON dt.user_id = u.id
+       ORDER BY dt.created_at DESC`
+    );
+
+    // Get upvotes by this user
+    const upvotesResult = await query(
+      "SELECT topic_id FROM discussion_upvotes WHERE user_id = $1",
+      [userId]
+    );
+    const upvotedTopicIds = new Set(upvotesResult.rows.map((r) => r.topic_id));
+
+    const topicIds = topicsResult.rows.map((t) => t.id);
+
+    // Get comments for topics
+    let commentsResult = { rows: [] as any[] };
+    if (topicIds.length > 0) {
+      commentsResult = await query(
+        `SELECT c.*, u.name AS user_name
+         FROM discussion_comments c
+         JOIN users u ON c.user_id = u.id
+         WHERE c.topic_id = ANY($1::int[])
+         ORDER BY c.created_at ASC`,
+        [topicIds]
+      );
+    }
+
+    // Organize comments by topic ID
+    const commentsByTopicId: { [key: number]: any[] } = {};
+    for (const comment of commentsResult.rows) {
+      if (!commentsByTopicId[comment.topic_id]) {
+        commentsByTopicId[comment.topic_id] = [];
+      }
+      commentsByTopicId[comment.topic_id].push(comment);
+    }
+
+    // Get user's likes and follows
+    const likesResult = await query(
+      "SELECT topic_id FROM discussion_likes WHERE user_id = $1",
+      [userId]
+    );
+    const followsResult = await query(
+      "SELECT topic_id FROM discussion_follows WHERE user_id = $1",
+      [userId]
+    );
+
+    const likedTopicIds = new Set(likesResult.rows.map((r) => r.topic_id));
+    const followedTopicIds = new Set(followsResult.rows.map((r) => r.topic_id));
+
+    // Get like counts
+    const likeCountsResult = await query(
+      `SELECT topic_id, COUNT(*) as like_count
+       FROM discussion_likes
+       GROUP BY topic_id`
+    );
+    const likeCounts: { [key: number]: number } = {};
+    for (const row of likeCountsResult.rows) {
+      likeCounts[row.topic_id] = parseInt(row.like_count, 10);
+    }
+
+    // Merge into enriched topic objects
+    const enrichedTopics = topicsResult.rows.map((topic) => ({
+      id: topic.id,
+      topic: topic.topic,
+      title: topic.title,
+      createdAt: topic.created_at,
+      author: topic.author_name,
+      likes: likeCounts[topic.id] || 0,
+      shares: topic.shares || 0,
+      upvotes: topic.upvotes || 0,
+      liked: likedTopicIds.has(topic.id),
+      followed: followedTopicIds.has(topic.id),
+      upvoted: upvotedTopicIds.has(topic.id),
+      comments: commentsByTopicId[topic.id] || [],
+      authorId: topic.authorId,  // <-- here is the fixed alias
+    }));
+
+    res.json(enrichedTopics);
+  })
+);
+
+
 //--------------Post Discussion Topic---------------
+
 app.post(
   "/discussion_topics",
   authenticateToken,
@@ -1540,110 +1639,6 @@ app.post(
 );
 
 
-//--Get All discussion topics---
-// ✅ GET discussion topics with author, comments, likes, follows
-app.get(
-  "/discussion_topics",
-  authenticateToken,
-  asyncHandler(async (req: Request, res: Response) => {
-
-    const userId = req.user?.userId;
-    
-    
-    if (!userId) return res.status(401).json({ error: "Unauthorized" });
-
-    
-    // ✅ 1. Get topics with author names
-    const topicsResult = await query(
-      `SELECT dt.id, dt.user_id, dt.title, dt.topic, dt.created_at,
-              u.name AS author_name,
-              (SELECT COUNT(*) FROM discussion_upvotes du WHERE du.topic_id = dt.id) AS upvotes
-       FROM discussion_topics dt
-       JOIN users u ON dt.user_id = u.id
-       ORDER BY dt.created_at DESC`
-    );
-console.log(topicsResult.rows.map(t => ({ id: t.id, user_id: t.user_id })));
-
-//--get upvotes--
-    const upvotesResult = await query(
-  "SELECT topic_id FROM discussion_upvotes WHERE user_id = $1",
-  [userId]
-);
-const upvotedTopicIds = new Set(upvotesResult.rows.map((r) => r.topic_id));
-//----------------
-    const topicIds = topicsResult.rows.map((t) => t.id);
-
-    // ✅ 2. Get comment list
-    let commentsResult = { rows: [] as any[] };
-    if (topicIds.length > 0) {
-      commentsResult = await query(
-        `SELECT c.*, u.name AS user_name
-         FROM discussion_comments c
-         JOIN users u ON c.user_id = u.id
-         WHERE c.topic_id = ANY($1::int[])
-         ORDER BY c.created_at ASC`,
-        [topicIds]
-      );
-    }
-
-    // ✅ 3. Organize comments by topic ID
-    const commentsByTopicId: { [key: number]: any[] } = {};
-    for (const comment of commentsResult.rows) {
-      if (!commentsByTopicId[comment.topic_id]) {
-        commentsByTopicId[comment.topic_id] = [];
-      }
-      commentsByTopicId[comment.topic_id].push(comment);
-    }
-
-    // ✅ 4. Get user's likes and follows
-    const likesResult = await query(
-      "SELECT topic_id FROM discussion_likes WHERE user_id = $1",
-      [userId]
-    );
-    const followsResult = await query(
-      "SELECT topic_id FROM discussion_follows WHERE user_id = $1",
-      [userId]
-    );
-
-    
-
-    const likedTopicIds = new Set(likesResult.rows.map((r) => r.topic_id));
-    const followedTopicIds = new Set(followsResult.rows.map((r) => r.topic_id));
-
-    // ✅ 5. Get like counts
-    const likeCountsResult = await query(
-      `SELECT topic_id, COUNT(*) as like_count
-       FROM discussion_likes
-       GROUP BY topic_id`
-    );
-    const likeCounts: { [key: number]: number } = {};
-    for (const row of likeCountsResult.rows) {
-      likeCounts[row.topic_id] = parseInt(row.like_count, 10);
-    }
-
-  
-    // ✅ 6. Merge everything into enriched topic objects
-    const enrichedTopics = topicsResult.rows.map((topic) => ({
-  id: topic.id,
-  topic: topic.topic,
-   title: topic.title,
-  createdAt: topic.created_at,
-  author: topic.author_name,
-  likes: likeCounts[topic.id] || 0,
-  shares: topic.shares || 0,
-  upvotes: topic.upvotes || 0,  // ✅ add this line
-  liked: likedTopicIds.has(topic.id),
-  followed: followedTopicIds.has(topic.id),
-  upvoted: upvotedTopicIds.has(topic.id),
-  comments: commentsByTopicId[topic.id] || [],
-  authorId: topic.user_id, 
-}));
-
-
-    // ✅ 7. Return to frontend
-    res.json(enrichedTopics);
-  })
-);
 
 //----delete discussion topic---
 app.delete(

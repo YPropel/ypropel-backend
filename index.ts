@@ -1386,6 +1386,7 @@ app.get(
   authenticateToken,
   asyncHandler(async (req: Request, res: Response) => {
     const userId = req.user?.userId;
+    
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
     // ✅ 1. Get topics with author names
@@ -1472,7 +1473,7 @@ const upvotedTopicIds = new Set(upvotesResult.rows.map((r) => r.topic_id));
   followed: followedTopicIds.has(topic.id),
   upvoted: upvotedTopicIds.has(topic.id),
   comments: commentsByTopicId[topic.id] || [],
-  
+  authorId: topic.user_id, 
 }));
 
 

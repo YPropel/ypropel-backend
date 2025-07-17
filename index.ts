@@ -1776,16 +1776,31 @@ app.get("/users/search", authenticateToken, async (req: Request, res: Response):
       return res.status(400).json({ error: "Content is required" });
     }
 
-    const result = await query(
+    // Insert the comment
+    const insertResult = await query(
       `INSERT INTO discussion_comments (topic_id, user_id, content, created_at)
        VALUES ($1, $2, $3, NOW())
        RETURNING id, topic_id, user_id, content, created_at`,
       [topicId, userId, content]
     );
 
-    res.status(201).json(result.rows[0]);
+    const newComment = insertResult.rows[0];
+
+    // Get the user name to return with comment
+    const userResult = await query(`SELECT name FROM users WHERE id = $1`, [userId]);
+    const userName = userResult.rows[0]?.name || "Unknown";
+
+    // Return the comment with userName
+    res.status(201).json({
+      id: newComment.id,
+      userId: newComment.user_id,
+      userName,
+      content: newComment.content,
+      createdAt: newComment.created_at,
+    });
   })
 );
+
 
 //----Get comments for discussion topic---
 app.get(

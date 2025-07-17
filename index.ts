@@ -520,7 +520,6 @@ if (!userId) return res.status(401).json({ error: "Unauthorized" });
 );
 
 // -----POST create a new post on home page----------
-import { v2 as cloudinary } from "cloudinary";
 
 // Your multer upload middleware with memoryStorage
 // const upload = multer({ storage: multerMemoryStorage });

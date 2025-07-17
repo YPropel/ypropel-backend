@@ -1385,6 +1385,8 @@ app.get(
   "/discussion_topics",
   authenticateToken,
   asyncHandler(async (req: Request, res: Response) => {
+
+    console.log("GET /discussion_topics called");
     const userId = req.user?.userId;
     
     

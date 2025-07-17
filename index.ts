@@ -1246,20 +1246,24 @@ app.post(
   "/discussion_topics",
   authenticateToken,
   asyncHandler(async (req: Request, res: Response) => {
-    const { topic } = req.body;
+    const { title, topic } = req.body;
+    //const { topic } = req.body;
     const userId = req.user?.userId;
 
-    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    if (!userId) 
+       if (!title || title.trim() === "") {
+      return res.status(401).json({ error: "Unauthorized" });
+       }
     if (!topic || topic.trim() === "") {
       return res.status(400).json({ error: "Topic content is required" });
     }
 
-    // 1. Insert topic
-    const insertResult = await query(
-      `INSERT INTO discussion_topics (user_id, topic, created_at)
-       VALUES ($1, $2, NOW())
-       RETURNING id, user_id, topic, created_at`,
-      [userId, topic]
+    // 1. Insert topic & title
+      const insertResult = await query(
+      `INSERT INTO discussion_topics (user_id, title, topic, created_at)
+       VALUES ($1, $2, $3, NOW())
+       RETURNING id, user_id, title, topic, created_at`,
+      [userId, title.trim(), topic.trim()]
     );
     const newTopic = insertResult.rows[0];
 
@@ -1270,6 +1274,7 @@ app.post(
     // 3. Return enriched topic object
     res.status(201).json({
       id: newTopic.id,
+      title: newTopic.title,
       topic: newTopic.topic,
       createdAt: newTopic.created_at,
       author: authorName,
@@ -1384,12 +1389,13 @@ app.get(
 
     // ✅ 1. Get topics with author names
     const topicsResult = await query(
-  `SELECT dt.*, u.name AS author_name,
-     (SELECT COUNT(*) FROM discussion_upvotes du WHERE du.topic_id = dt.id) AS upvotes
-   FROM discussion_topics dt
-   JOIN users u ON dt.user_id = u.id
-   ORDER BY dt.created_at DESC`
-);
+      `SELECT dt.id, dt.user_id, dt.title, dt.topic, dt.created_at,
+              u.name AS author_name,
+              (SELECT COUNT(*) FROM discussion_upvotes du WHERE du.topic_id = dt.id) AS upvotes
+       FROM discussion_topics dt
+       JOIN users u ON dt.user_id = u.id
+       ORDER BY dt.created_at DESC`
+    );
 
 //--get upvotes--
     const upvotesResult = await query(
@@ -1455,6 +1461,7 @@ const upvotedTopicIds = new Set(upvotesResult.rows.map((r) => r.topic_id));
     const enrichedTopics = topicsResult.rows.map((topic) => ({
   id: topic.id,
   topic: topic.topic,
+   title: topic.title,
   createdAt: topic.created_at,
   author: topic.author_name,
   likes: likeCounts[topic.id] || 0,

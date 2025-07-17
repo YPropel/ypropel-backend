@@ -1617,6 +1617,7 @@ app.post(
   asyncHandler(async (req: Request, res: Response) => {
     const { name, isPublic, members } = req.body;
     const userId = req.user?.userId;
+    
 
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
     if (!name || name.trim() === "") return res.status(400).json({ error: "Study circle name is required" });
@@ -1665,13 +1666,28 @@ app.get(
   "/study-circles",
   authenticateToken,
   asyncHandler(async (_req: Request, res: Response) => {
-    const circles = await query(
+  
+    const ownerEmail = (_req.query.ownerEmail as string) || null;
+     const circleName = (_req.query.circleName as string) || null;
+
+   /* const circles = await query(
       `SELECT sc.id, sc.name, sc.is_public, sc.created_at, sc.user_id AS created_by, u.name AS creator
        FROM study_circles sc
        JOIN users u ON sc.user_id = u.id
        ORDER BY sc.created_at DESC`
+    );*/
+
+    const  results = await query(
+       `SELECT sc.id, sc.name, sc.is_public, sc.created_at, sc.user_id AS created_by, u.name AS creator, u.email AS owner_email
+       FROM study_circles sc
+       JOIN users u ON sc.user_id = u.id
+       WHERE ($1::text IS NULL OR u.email ILIKE '%' || $1 || '%')
+         AND ($2::text IS NULL OR sc.name ILIKE '%' || $2 || '%')
+       ORDER BY sc.created_at DESC`,
+      [ownerEmail, circleName]
     );
 
+      //  Get members for circles (same as before)
     const memberResults = await query(
       `SELECT scm.circle_id, u.email
        FROM study_circle_members scm
@@ -1685,10 +1701,12 @@ app.get(
       is_public: boolean;
       creator: string;
       created_by: number; // ✅ Important for permission checks
+       owner_email: string;   // for search circles by member email
       members: string[];
     }>();
 
-    circles.rows.forEach(circle => {
+   // Build map from filtered circles only
+    results.rows.forEach(circle => {
       circleMap.set(circle.id, { ...circle, members: [] });
     });
 

@@ -519,9 +519,86 @@ if (!userId) return res.status(401).json({ error: "Unauthorized" });
   })
 );
 
-// -----POST create a new post
-// POST create a new post
+// -----POST create a new post on home page----------
+import { v2 as cloudinary } from "cloudinary";
+
+// Your multer upload middleware with memoryStorage
+// const upload = multer({ storage: multerMemoryStorage });
+
 app.post(
+  "/posts",
+  authenticateToken,
+  upload.fields([
+    { name: "image", maxCount: 1 },
+    { name: "video", maxCount: 1 },
+  ]),
+  asyncHandler(async (req: Request, res: Response) => {
+    try {
+      const userId = req.user?.userId;
+      if (!userId) return res.status(401).json({ error: "Unauthorized" });
+
+      const { content } = req.body;
+
+      const files = req.files as { [fieldname: string]: Express.Multer.File[] };
+      const imageFile = files?.image?.[0];
+      const videoFile = files?.video?.[0];
+
+      let imageUrl: string | null = null;
+      let videoUrl: string | null = null;
+
+      // Upload image to Cloudinary if exists
+      if (imageFile) {
+        const uploadResult = await new Promise<any>((resolve, reject) => {
+          const stream = cloudinary.uploader.upload_stream(
+            { folder: "posts" },
+            (error, result) => {
+              if (error) reject(error);
+              else resolve(result);
+            }
+          );
+          stream.end(imageFile.buffer);
+        });
+        imageUrl = uploadResult.secure_url;
+      }
+
+      // Upload video to Cloudinary if exists
+      if (videoFile) {
+        const uploadResult = await new Promise<any>((resolve, reject) => {
+          const stream = cloudinary.uploader.upload_stream(
+            { resource_type: "video", folder: "posts" },
+            (error, result) => {
+              if (error) reject(error);
+              else resolve(result);
+            }
+          );
+          stream.end(videoFile.buffer);
+        });
+        videoUrl = uploadResult.secure_url;
+      }
+
+      // Validate: must have content or at least one media URL
+      if (!content && !imageUrl && !videoUrl) {
+        return res.status(400).json({ error: "Post must contain content or media." });
+      }
+
+      // Insert post in DB
+      const result = await query(
+        `INSERT INTO posts (user_id, content, image_url, video_url, created_at)
+         VALUES ($1, $2, $3, $4, NOW())
+         RETURNING id, user_id AS "authorId", content, image_url AS "imageUrl", video_url AS "videoUrl", created_at`,
+        [userId, content || "", imageUrl, videoUrl]
+      );
+
+      res.status(201).json(result.rows[0]);
+    } catch (error) {
+      console.error("❌ Error inserting post:", error);
+      res.status(500).json({ error: "Failed to create post" });
+    }
+  })
+);
+
+// POST create a new post
+/*app.post(
   "/posts",
   authenticateToken,
   upload.fields([
@@ -565,7 +642,7 @@ app.post(
       res.status(500).json({ error: "Failed to create post" });
     }
   })
-);
+); */
 
 
 //----- PUT update a post by ID (protected)

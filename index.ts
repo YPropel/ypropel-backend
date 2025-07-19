@@ -275,30 +275,27 @@ app.post(
   });
 } */
 
-function authenticateToken(
-  req: Request,
-  res: Response,
-  next: NextFunction
-): Response | void {
-  const authHeader = req.headers["authorization"];
-  //console.log("🔥 Auth header:", authHeader);
+class AuthError extends Error {
+  statusCode: number;
+  constructor(message: string, statusCode: number = 401) {
+    super(message);
+    this.statusCode = statusCode;
+  }
+}
 
+function authenticateToken(req: Request, res: Response, next: NextFunction): void {
+  const authHeader = req.headers["authorization"];
   const token = authHeader?.split(" ")[1];
 
   if (!token) {
-    console.log("⚠️ No token found in Authorization header");
-    return res.status(401).json({ error: "No token provided" });
+    return next(new AuthError("No token provided", 401));
   }
 
   jwt.verify(token, JWT_SECRET, (err, decoded) => {
     if (err) {
-      console.log("❌ JWT verification failed:", err.message);
-      return res.status(403).json({ error: "Invalid or expired token" });
+      return next(new AuthError("Invalid or expired token", 403));
     }
 
-    //console.log("✅ JWT verified. Decoded payload:", decoded);
-
-    // Cast decoded payload
     const payload = decoded as { userId: number; email?: string; is_admin?: boolean };
 
     req.user = {

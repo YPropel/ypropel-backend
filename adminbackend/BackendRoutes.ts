@@ -557,11 +557,16 @@ router.post(
 
 // --------------- INTERN INSIDER Newsletter RSS IMPORT -----------------
 router.post(
-  "/import-intern-insider",
+  "/import-reddit-internships",
   adminOnly,
   asyncHandler(async (req: AuthRequest, res: Response) => {
+    const rssUrl = req.body.rssUrl || "https://www.reddit.com/r/internships/.rss";
+    if (!rssUrl) {
+      return res.status(400).json({ error: "rssUrl parameter is required." });
+    }
+
     try {
-      const feed = await parser.parseURL("https://interninsider.substack.com/feed");
+      const feed = await parser.parseURL(rssUrl);
       const validCategories = await fetchJobCategories();
       let insertedCount = 0;
 
@@ -571,18 +576,15 @@ router.post(
         const description = item.contentSnippet || item.content || "";
         const pubDate = item.pubDate ? new Date(item.pubDate) : new Date();
 
-        // Check duplicates by title or apply_url (link)
         const existing = await query(
           "SELECT id FROM jobs WHERE title = $1 OR apply_url = $2",
           [title, link]
         );
-        if (existing.rows.length > 0) continue; // skip duplicate
+        if (existing.rows.length > 0) continue;
 
-        // Infer category from title
         const inferredCategoryRaw = inferCategoryFromTitle(title);
         const inferredCategory = mapCategoryToValid(inferredCategoryRaw, validCategories);
 
-        // Insert into jobs table
         await query(
           `INSERT INTO jobs (
             title, description, category, company, location,
@@ -592,21 +594,21 @@ router.post(
             title,
             description,
             inferredCategory,
-            null,       // no company info in feed
-            null,       // no location info in feed
+            null,
+            null,
             link,
             pubDate,
             true,
-            "internship" // or "entry_level" as you prefer
+            "internship",
           ]
         );
         insertedCount++;
       }
 
-      res.json({ message: `Imported ${insertedCount} new internships from Intern Insider RSS feed.` });
+      res.json({ message: `Imported ${insertedCount} new jobs from Reddit RSS feed.` });
     } catch (error) {
-      console.error("Error importing Intern Insider RSS feed:", error);
-      res.status(500).json({ error: "Failed to import Intern Insider feed" });
+      console.error("Error importing Reddit RSS feed:", error);
+      res.status(500).json({ error: "Failed to import Reddit RSS feed" });
     }
   })
 );

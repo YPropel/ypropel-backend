@@ -555,74 +555,28 @@ router.post(
 //-----------------
 
 
+// ---- NEW: Import newsletter jobs (e.g. WayUp, LinkedIn newsletters) ----
 router.post(
-  "/import-remotive-internships",
+  "/import-newsletter-jobs",
   adminOnly,
   asyncHandler(async (req: AuthRequest, res: Response) => {
-    const rssUrl = "https://remotive.com/remote-jobs/feed";
+    const { newsletterUrl } = req.body;
+    if (!newsletterUrl) {
+      return res.status(400).json({ error: "newsletterUrl is required in the body" });
+    }
 
     try {
-      const feed = await parser.parseURL(rssUrl);
+      const feed = await parser.parseURL(newsletterUrl);
+
       const validCategories = await fetchJobCategories();
+
       let insertedCount = 0;
 
       for (const item of feed.items) {
-        // Filter strictly by type = internship
-        if (!item.type || item.type.toLowerCase() !== "internship") {
-          continue; // skip non-internships
-        }
-
         const title = item.title || "";
         const description = item.content || item.contentSnippet || "";
         const link = item.link || "";
         const pubDate = item.pubDate ? new Date(item.pubDate) : new Date();
-
-        const company = item.company || item["dc:creator"] || null;
-        const location = item.location || "";
-
-        // Parse location into country, state, city
-        let country: string | null = null;
-        let state: string | null = null;
-        let city: string | null = null;
-
-        if (location) {
-          const locLower = location.toLowerCase();
-
-          if (locLower.includes("remote")) {
-            country = "Remote";
-          } else if (locLower.includes("usa") || locLower.includes("united states")) {
-            country = "United States";
-
-            const usStates: Record<string, string> = {
-              ca: "CA",
-              california: "CA",
-              ny: "NY",
-              "new york": "NY",
-              tx: "TX",
-              texas: "TX",
-              wa: "WA",
-              washington: "WA",
-              fl: "FL",
-              florida: "FL",
-              il: "IL",
-              illinois: "IL",
-              // Add more states as needed
-            };
-
-            for (const [key, abbr] of Object.entries(usStates)) {
-              if (locLower.includes(key)) {
-                state = abbr;
-                break;
-              }
-            }
-
-            // Attempt to extract city if comma-separated
-            const parts = location.split(",");
-            if (parts.length > 1) {
-              city = parts[0].trim();
-            }
-          }
-        }
 
         if (!title || !link) continue;
 
@@ -633,9 +587,29 @@ router.post(
         );
         if (existing.rows.length > 0) continue;
 
-        // Infer category
+        // Infer category based on title
         const inferredCategoryRaw = inferCategoryFromTitle(title);
         const inferredCategory = mapCategoryToValid(inferredCategoryRaw, validCategories);
+
+        // Location parsing can be improved here based on newsletter feed specifics
+        const location = item.location || "Unknown";
+        let country = "United States";
+        let state = null;
+        let city = null;
+
+        if (location && typeof location === "string") {
+          const locLower = location.toLowerCase();
+          if (locLower.includes("remote")) country = "Remote";
+          else if (locLower.includes("usa") || locLower.includes("united states")) country = "United States";
+
+          const parts = location.split(",");
+          if (parts.length > 1) {
+            city = parts[0].trim();
+            state = parts[1].trim().toUpperCase();
+          } else {
+            city = location.trim();
+          }
+        }
 
         await query(
           `INSERT INTO jobs (
@@ -646,12 +620,12 @@ router.post(
             title,
             description,
             inferredCategory,
-            company,
+            item.creator || item["dc:creator"] || "Unknown",
             location,
             link,
             pubDate,
             true,
-            "internship",
+            "newsletter", // job_type for newsletter jobs
             country,
             state,
             city,
@@ -661,13 +635,15 @@ router.post(
         insertedCount++;
       }
 
-      res.json({ message: `Imported ${insertedCount} new internships from Remotive.` });
+      res.json({ message: `Imported ${insertedCount} new jobs from newsletter.` });
     } catch (error) {
-      console.error("Error importing Remotive RSS feed:", error);
-      res.status(500).json({ error: "Failed to import Remotive feed" });
+      console.error("Error importing newsletter jobs:", error);
+      res.status(500).json({ error: "Failed to import newsletter jobs" });
     }
   })
 );
+
+
 
 
 // ----------------- SIMPLYHIRED IMPORT -------------------

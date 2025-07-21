@@ -557,7 +557,7 @@ router.post(
   "/import-remotive-internships",
   adminOnly,
   asyncHandler(async (req: AuthRequest, res: Response) => {
-    const rssUrl = "https://remotive.com/feed";
+    const rssUrl = "https://remotive.com/remote-jobs/feed";
 
     try {
       const feed = await parser.parseURL(rssUrl);
@@ -573,7 +573,7 @@ router.post(
         const company = item.company || item["dc:creator"] || null;
         const location = item.location || null;
 
-        // Simple parsing for country, state, city
+        // Parse location to country, state, city if possible (simplified)
         let country: string | null = null;
         let state: string | null = null;
         let city: string | null = null;
@@ -583,40 +583,21 @@ router.post(
           if (locLower.includes("usa") || locLower.includes("united states")) {
             country = "United States";
           }
-          // Example: simple US state matching by abbreviation or full name (expand as needed)
-          const usStates = {
-            "ca": "CA", "california": "CA",
-            "ny": "NY", "new york": "NY",
-            "tx": "TX", "texas": "TX",
-            // add more states...
-          };
-          for (const [key, abbr] of Object.entries(usStates)) {
-            if (locLower.includes(key)) {
-              state = abbr;
-              break;
-            }
-          }
-          // For city, a simple heuristic could be the first part of location if comma-separated
-          if (!state) {
-            const parts = location.split(",");
-            if (parts.length > 0) {
-              city = parts[0].trim();
-            }
-          }
+          // Add more state parsing here if needed
         }
 
         const jobType = item.type || "internship";
 
         if (!title || !link) continue;
 
-        // Check for duplicates
+        // Duplicate check
         const existing = await query(
           "SELECT id FROM jobs WHERE title = $1 OR apply_url = $2",
           [title, link]
         );
         if (existing.rows.length > 0) continue;
 
-        // Map category
+        // Infer category
         const inferredCategoryRaw = inferCategoryFromTitle(title);
         const inferredCategory = mapCategoryToValid(inferredCategoryRaw, validCategories);
 
@@ -651,6 +632,7 @@ router.post(
     }
   })
 );
+
 
 
 

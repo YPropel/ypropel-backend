@@ -553,6 +553,15 @@ router.post(
   })
 );
 //-----------------
+import Parser from "rss-parser";
+
+const parser = new Parser({
+  headers: {
+    "User-Agent":
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0 Safari/537.36",
+  },
+});
+
 router.post(
   "/import-remotive-internships",
   adminOnly,
@@ -565,6 +574,11 @@ router.post(
       let insertedCount = 0;
 
       for (const item of feed.items) {
+        // Filter strictly by type = internship
+        if (!item.type || item.type.toLowerCase() !== "internship") {
+          continue; // skip non-internships
+        }
+
         const title = item.title || "";
         const description = item.content || item.contentSnippet || "";
         const link = item.link || "";
@@ -572,11 +586,6 @@ router.post(
 
         const company = item.company || item["dc:creator"] || null;
         const location = item.location || "";
-
-        // Filter only internship jobs
-        if (!/intern/i.test(title + description)) {
-          continue; // Skip non-internship jobs
-        }
 
         // Parse location into country, state, city
         let country: string | null = null;
@@ -591,7 +600,6 @@ router.post(
           } else if (locLower.includes("usa") || locLower.includes("united states")) {
             country = "United States";
 
-            // Simple US state parsing
             const usStates: Record<string, string> = {
               ca: "CA",
               california: "CA",

@@ -557,6 +557,7 @@ router.post(
 
 // ---- NEW: Import newsletter jobs (e.g. WayUp, LinkedIn newsletters) ----
 // ---- NEW: Import newsletter jobs (e.g. WayUp, LinkedIn newsletters) ----
+// ---- NEW: Import newsletter jobs (e.g. WayUp, LinkedIn newsletters) ----
 router.post(
   "/import-newsletter-jobs",
   adminOnly,
@@ -592,13 +593,13 @@ router.post(
         const inferredCategoryRaw = inferCategoryFromTitle(title);
         const inferredCategory = mapCategoryToValid(inferredCategoryRaw, validCategories);
 
-        // Location parsing with proper types
+        // Location parsing (simple heuristic, can be improved based on feed)
         const location = item.location || "Unknown";
-        let country: string | null = "United States";
+        let country = "United States";
         let state: string | null = null;
         let city: string | null = null;
 
-        if (location && typeof location === "string") {
+        if (typeof location === "string") {
           const locLower = location.toLowerCase();
           if (locLower.includes("remote")) country = "Remote";
           else if (locLower.includes("usa") || locLower.includes("united states")) country = "United States";
@@ -643,6 +644,7 @@ router.post(
     }
   })
 );
+
 
 
 // ----------------- SIMPLYHIRED IMPORT -------------------

@@ -552,9 +552,7 @@ router.post(
     res.json({ success: true, inserted: insertedCount });
   })
 );
-
-// --- Other existing routes unchanged ---
-
+//-----------------
 router.post(
   "/import-remotive-internships",
   adminOnly,
@@ -569,40 +567,80 @@ router.post(
       for (const item of feed.items) {
         const title = item.title || "";
         const link = item.link || "";
-        const description = item.contentSnippet || item.content || "";
+        const description = item.content || item.contentSnippet || "";
         const pubDate = item.pubDate ? new Date(item.pubDate) : new Date();
 
-        // Simple filter: only import if title or description contains "intern"
-        if (!/intern/i.test(title + description)) {
-          continue;
+        const company = item.company || item["dc:creator"] || null;
+        const location = item.location || null;
+
+        // Simple parsing for country, state, city
+        let country: string | null = null;
+        let state: string | null = null;
+        let city: string | null = null;
+
+        if (location) {
+          const locLower = location.toLowerCase();
+          if (locLower.includes("usa") || locLower.includes("united states")) {
+            country = "United States";
+          }
+          // Example: simple US state matching by abbreviation or full name (expand as needed)
+          const usStates = {
+            "ca": "CA", "california": "CA",
+            "ny": "NY", "new york": "NY",
+            "tx": "TX", "texas": "TX",
+            // add more states...
+          };
+          for (const [key, abbr] of Object.entries(usStates)) {
+            if (locLower.includes(key)) {
+              state = abbr;
+              break;
+            }
+          }
+          // For city, a simple heuristic could be the first part of location if comma-separated
+          if (!state) {
+            const parts = location.split(",");
+            if (parts.length > 0) {
+              city = parts[0].trim();
+            }
+          }
         }
 
+        const jobType = item.type || "internship";
+
+        if (!title || !link) continue;
+
+        // Check for duplicates
         const existing = await query(
           "SELECT id FROM jobs WHERE title = $1 OR apply_url = $2",
           [title, link]
         );
         if (existing.rows.length > 0) continue;
 
+        // Map category
         const inferredCategoryRaw = inferCategoryFromTitle(title);
         const inferredCategory = mapCategoryToValid(inferredCategoryRaw, validCategories);
 
         await query(
           `INSERT INTO jobs (
             title, description, category, company, location,
-            apply_url, posted_at, is_active, job_type
-          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+            apply_url, posted_at, is_active, job_type, country, state, city
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
           [
             title,
             description,
             inferredCategory,
-            null,
-            null,
+            company,
+            location,
             link,
             pubDate,
             true,
-            "internship",
+            jobType,
+            country,
+            state,
+            city,
           ]
         );
+
         insertedCount++;
       }
 
@@ -613,6 +651,7 @@ router.post(
     }
   })
 );
+
 
 
 // ----------------- SIMPLYHIRED IMPORT -------------------

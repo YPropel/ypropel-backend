@@ -555,6 +555,62 @@ router.post(
 
 // --- Other existing routes unchanged ---
 
+// --------------- INTERN INSIDER Newsletter RSS IMPORT -----------------
+router.post(
+  "/import-intern-insider",
+  adminOnly,
+  asyncHandler(async (req: AuthRequest, res: Response) => {
+    try {
+      const feed = await parser.parseURL("https://interninsider.substack.com/feed");
+      const validCategories = await fetchJobCategories();
+      let insertedCount = 0;
+
+      for (const item of feed.items) {
+        const title = item.title || "";
+        const link = item.link || "";
+        const description = item.contentSnippet || item.content || "";
+        const pubDate = item.pubDate ? new Date(item.pubDate) : new Date();
+
+        // Check duplicates by title or apply_url (link)
+        const existing = await query(
+          "SELECT id FROM jobs WHERE title = $1 OR apply_url = $2",
+          [title, link]
+        );
+        if (existing.rows.length > 0) continue; // skip duplicate
+
+        // Infer category from title
+        const inferredCategoryRaw = inferCategoryFromTitle(title);
+        const inferredCategory = mapCategoryToValid(inferredCategoryRaw, validCategories);
+
+        // Insert into jobs table
+        await query(
+          `INSERT INTO jobs (
+            title, description, category, company, location,
+            apply_url, posted_at, is_active, job_type
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+          [
+            title,
+            description,
+            inferredCategory,
+            null,       // no company info in feed
+            null,       // no location info in feed
+            link,
+            pubDate,
+            true,
+            "internship" // or "entry_level" as you prefer
+          ]
+        );
+        insertedCount++;
+      }
+
+      res.json({ message: `Imported ${insertedCount} new internships from Intern Insider RSS feed.` });
+    } catch (error) {
+      console.error("Error importing Intern Insider RSS feed:", error);
+      res.status(500).json({ error: "Failed to import Intern Insider feed" });
+    }
+  })
+);
+
 // ----------------- SIMPLYHIRED IMPORT -------------------
 router.post(
   "/import-simplyhired-jobs",

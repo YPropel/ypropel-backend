@@ -566,31 +566,66 @@ router.post(
 
       for (const item of feed.items) {
         const title = item.title || "";
-        const link = item.link || "";
         const description = item.content || item.contentSnippet || "";
+        const link = item.link || "";
         const pubDate = item.pubDate ? new Date(item.pubDate) : new Date();
 
         const company = item.company || item["dc:creator"] || null;
-        const location = item.location || null;
+        const location = item.location || "";
 
-        // Parse location to country, state, city if possible (simplified)
+        // Filter only internship jobs
+        if (!/intern/i.test(title + description)) {
+          continue; // Skip non-internship jobs
+        }
+
+        // Parse location into country, state, city
         let country: string | null = null;
         let state: string | null = null;
         let city: string | null = null;
 
         if (location) {
           const locLower = location.toLowerCase();
-          if (locLower.includes("usa") || locLower.includes("united states")) {
-            country = "United States";
-          }
-          // Add more state parsing here if needed
-        }
 
-        const jobType = item.type || "internship";
+          if (locLower.includes("remote")) {
+            country = "Remote";
+          } else if (locLower.includes("usa") || locLower.includes("united states")) {
+            country = "United States";
+
+            // Simple US state parsing
+            const usStates: Record<string, string> = {
+              ca: "CA",
+              california: "CA",
+              ny: "NY",
+              "new york": "NY",
+              tx: "TX",
+              texas: "TX",
+              wa: "WA",
+              washington: "WA",
+              fl: "FL",
+              florida: "FL",
+              il: "IL",
+              illinois: "IL",
+              // Add more states as needed
+            };
+
+            for (const [key, abbr] of Object.entries(usStates)) {
+              if (locLower.includes(key)) {
+                state = abbr;
+                break;
+              }
+            }
+
+            // Attempt to extract city if comma-separated
+            const parts = location.split(",");
+            if (parts.length > 1) {
+              city = parts[0].trim();
+            }
+          }
+        }
 
         if (!title || !link) continue;
 
-        // Duplicate check
+        // Check for duplicates by title or apply_url
         const existing = await query(
           "SELECT id FROM jobs WHERE title = $1 OR apply_url = $2",
           [title, link]
@@ -615,7 +650,7 @@ router.post(
             link,
             pubDate,
             true,
-            jobType,
+            "internship",
             country,
             state,
             city,
@@ -632,8 +667,6 @@ router.post(
     }
   })
 );
-
-
 
 
 // ----------------- SIMPLYHIRED IMPORT -------------------

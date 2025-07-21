@@ -555,15 +555,11 @@ router.post(
 
 // --- Other existing routes unchanged ---
 
-// --------------- INTERN INSIDER Newsletter RSS IMPORT -----------------
 router.post(
-  "/import-reddit-internships",
+  "/import-remotive-internships",
   adminOnly,
   asyncHandler(async (req: AuthRequest, res: Response) => {
-    const rssUrl = req.body.rssUrl || "https://www.reddit.com/r/internships/.rss";
-    if (!rssUrl) {
-      return res.status(400).json({ error: "rssUrl parameter is required." });
-    }
+    const rssUrl = "https://remotive.com/feed";
 
     try {
       const feed = await parser.parseURL(rssUrl);
@@ -575,6 +571,11 @@ router.post(
         const link = item.link || "";
         const description = item.contentSnippet || item.content || "";
         const pubDate = item.pubDate ? new Date(item.pubDate) : new Date();
+
+        // Simple filter: only import if title or description contains "intern"
+        if (!/intern/i.test(title + description)) {
+          continue;
+        }
 
         const existing = await query(
           "SELECT id FROM jobs WHERE title = $1 OR apply_url = $2",
@@ -605,13 +606,14 @@ router.post(
         insertedCount++;
       }
 
-      res.json({ message: `Imported ${insertedCount} new jobs from Reddit RSS feed.` });
+      res.json({ message: `Imported ${insertedCount} new internships from Remotive.` });
     } catch (error) {
-      console.error("Error importing Reddit RSS feed:", error);
-      res.status(500).json({ error: "Failed to import Reddit RSS feed" });
+      console.error("Error importing Remotive RSS feed:", error);
+      res.status(500).json({ error: "Failed to import Remotive feed" });
     }
   })
 );
+
 
 // ----------------- SIMPLYHIRED IMPORT -------------------
 router.post(

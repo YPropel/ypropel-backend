@@ -244,66 +244,93 @@ router.post(
 
 // ----------------- LINKEDIN NEWSLETTER IMPORT -------------------
 router.post(
-  "/import-linkedin-newsletter",
+  "/import-linkedin-detailed-jobs",
   adminOnly,
   asyncHandler(async (req: AuthRequest, res: Response) => {
-    const { emailHtml } = req.body;
-    if (!emailHtml) {
-      return res.status(400).json({ error: "emailHtml is required in the body" });
+    const { emailHtml, seeAllJobsUrl } = req.body;
+
+    let urlToFetch = seeAllJobsUrl;
+
+    if (!urlToFetch && emailHtml) {
+      const $email = cheerio.load(emailHtml);
+      const link = $email("a:contains('See all jobs')").attr("href");
+      if (!link) {
+        return res.status(400).json({ error: "Could not find 'See all jobs' link in email HTML" });
+      }
+      urlToFetch = link;
     }
+
+    if (!urlToFetch) {
+      return res.status(400).json({ error: "No 'See all jobs' URL provided or found" });
+    }
+
+    // Fetch LinkedIn jobs page HTML
+    const response = await axios.get(urlToFetch, {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
+      },
+    });
+
+    const $ = cheerio.load(response.data);
 
     const validCategories = await fetchJobCategories();
-    let insertedCount = 0;
 
-    try {
-      const cheerio = (await import("cheerio")).default;
-      const $ = cheerio.load(emailHtml);
+    const jobs: Array<{
+      title: string;
+      company: string;
+      location: string;
+      description: string;
+      applyUrl: string;
+    }> = [];
 
-      const links = $("a").toArray();
+    $(".jobs-search-results__list-item").each((_, elem) => {
+      const el = $(elem);
 
-      for (const elem of links) {
-        const link = $(elem).attr("href") || "";
-        const title = $(elem).text().trim();
+      const title = el.find("a.job-card-list__title, a.base-card__full-link").text().trim();
+      const company = el.find("a.job-card-container__company-name, h4.base-search-card__subtitle").text().trim();
+      const location = el.find(".job-card-container__metadata-item, span.job-search-card__location").text().trim();
+      const applyUrl = el.find("a.job-card-list__title, a.base-card__full-link").attr("href") || "";
+      const description =
+        el.find(".job-card-list__snippet, p.job-snippet, div.job-card-container__description").text().trim() || "";
 
-        if (!title || !link) continue;
-
-        const existing = await query(
-          "SELECT id FROM jobs WHERE title = $1 OR apply_url = $2",
-          [title, link]
-        );
-        if (existing.rows.length > 0) continue;
-
-        const inferredCategoryRaw = inferCategoryFromTitle(title);
-        const inferredCategory = mapCategoryToValid(inferredCategoryRaw, validCategories);
-
-        await query(
-          `INSERT INTO jobs (
-            title, description, category, company, location,
-            apply_url, posted_at, is_active, job_type, country, state, city
-          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-          [
-            title,
-            "", // No description available from simple parsing
-            inferredCategory,
-            "LinkedIn Newsletter",
-            "LinkedIn Newsletter",
-            link,
-            new Date(),
-            true,
-            "newsletter",
-            "United States",
-            null,
-            null,
-          ]
-        );
-        insertedCount++;
+      if (title && applyUrl) {
+        jobs.push({ title, company, location, description, applyUrl });
       }
+    });
 
-      res.json({ message: `Imported ${insertedCount} new jobs from LinkedIn newsletter.` });
-    } catch (error) {
-      console.error("Error importing LinkedIn newsletter jobs:", error);
-      res.status(500).json({ error: "Failed to import LinkedIn newsletter jobs" });
+    let insertedCount = 0;
+    for (const job of jobs) {
+      const exists = await query("SELECT id FROM jobs WHERE title = $1 AND apply_url = $2", [job.title, job.applyUrl]);
+      if (exists.rows.length > 0) continue;
+
+      const inferredCategoryRaw = inferCategoryFromTitle(job.title);
+      const inferredCategory = mapCategoryToValid(inferredCategoryRaw, validCategories);
+
+      await query(
+        `INSERT INTO jobs (
+          title, description, category, company, location,
+          apply_url, posted_at, is_active, job_type, country, state, city
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+        [
+          job.title,
+          job.description,
+          inferredCategory,
+          job.company || "LinkedIn",
+          job.location || "Unknown",
+          job.applyUrl,
+          new Date(),
+          true,
+          "linkedin_detailed",
+          "United States",
+          null,
+          null,
+        ]
+      );
+      insertedCount++;
     }
+
+    res.json({ message: `Imported ${insertedCount} new detailed jobs from LinkedIn.` });
   })
 );
 

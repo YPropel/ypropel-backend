@@ -317,17 +317,22 @@ interface EmailData {
 console.log("Registering /fetch-gmail-emails route");
 router.post(
   "/fetch-gmail-emails",
+  authenticateToken,
   adminOnly,
   asyncHandler(async (req: AuthRequest, res: Response) => {
     try {
-    const tokenPath = path.resolve(__dirname, "token.json");
-
-console.log("[fetch-gmail-emails] Using token path:", tokenPath);
-      if (!fs.existsSync(tokenPath)) {
-        return res.status(500).json({ error: "No saved Google OAuth token found." });
+      const tokenJsonStr = process.env.GOOGLE_OAUTH_TOKEN_JSON;
+      if (!tokenJsonStr) {
+        return res.status(500).json({ error: "No Google OAuth token found in environment variables." });
       }
 
-      let tokens = JSON.parse(fs.readFileSync(tokenPath, "utf-8"));
+      let tokens;
+      try {
+        tokens = JSON.parse(tokenJsonStr);
+      } catch (e) {
+        console.error("Failed to parse GOOGLE_OAUTH_TOKEN_JSON:", e);
+        return res.status(500).json({ error: "Invalid Google OAuth token JSON format." });
+      }
 
       const oauth2Client = new google.auth.OAuth2(
         process.env.GOOGLE_CLIENT_ID,
@@ -336,6 +341,7 @@ console.log("[fetch-gmail-emails] Using token path:", tokenPath);
       );
       oauth2Client.setCredentials(tokens);
 
+      // Setup token refresh event to update tokens in env (optional)
       oauth2Client.on("tokens", (newTokens) => {
         if (newTokens.refresh_token) {
           tokens.refresh_token = newTokens.refresh_token;
@@ -343,10 +349,13 @@ console.log("[fetch-gmail-emails] Using token path:", tokenPath);
         if (newTokens.access_token) {
           tokens.access_token = newTokens.access_token;
           tokens.expiry_date = newTokens.expiry_date;
+          // Note: To persist updated tokens, you'd need to save them somewhere (file, DB, or env)
+          // but environment variables usually can't be updated at runtime.
+          console.log("New access token refreshed.");
         }
-        fs.writeFileSync(tokenPath, JSON.stringify(tokens, null, 2));
       });
 
+      // Force refresh token to update access token if expired
       await oauth2Client.getAccessToken();
 
       const gmail = google.gmail({ version: "v1", auth: oauth2Client });
@@ -383,6 +392,7 @@ console.log("[fetch-gmail-emails] Using token path:", tokenPath);
     }
   })
 );
+
 
 // ----- NEW: Import jobs from plain email text (simple example) -----
 

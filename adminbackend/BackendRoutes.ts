@@ -319,7 +319,8 @@ router.post(
   adminOnly,
   asyncHandler(async (req: AuthRequest, res: Response) => {
     try {
-      const tokenPath = path.join(__dirname, "token.json");
+     const tokenPath = path.resolve(process.cwd(), "token.json");
+console.log("[fetch-gmail-emails] Using token path:", tokenPath);
       if (!fs.existsSync(tokenPath)) {
         return res.status(500).json({ error: "No saved Google OAuth token found." });
       }

@@ -256,16 +256,19 @@ router.post(
       const $email = cheerio.load(emailHtml);
       const link = $email("a:contains('See all jobs')").attr("href");
       if (!link) {
+        console.error("Could not find 'See all jobs' link in email HTML");
         return res.status(400).json({ error: "Could not find 'See all jobs' link in email HTML" });
       }
       urlToFetch = link;
     }
 
     if (!urlToFetch) {
+      console.error("No 'See all jobs' URL provided or found");
       return res.status(400).json({ error: "No 'See all jobs' URL provided or found" });
     }
 
     // Fetch LinkedIn jobs page HTML
+    console.log(`Fetching LinkedIn jobs page from URL: ${urlToFetch}`);
     const response = await axios.get(urlToFetch, {
       headers: {
         "User-Agent":
@@ -300,40 +303,56 @@ router.post(
       }
     });
 
+    console.log(`Found ${jobs.length} jobs on LinkedIn page.`);
+
     let insertedCount = 0;
     for (const job of jobs) {
-      const exists = await query("SELECT id FROM jobs WHERE title = $1 AND apply_url = $2", [job.title, job.applyUrl]);
-      if (exists.rows.length > 0) continue;
+      try {
+        const exists = await query("SELECT id FROM jobs WHERE title = $1 AND apply_url = $2", [job.title, job.applyUrl]);
 
-      const inferredCategoryRaw = inferCategoryFromTitle(job.title);
-      const inferredCategory = mapCategoryToValid(inferredCategoryRaw, validCategories);
+        if (exists.rows.length > 0) {
+          console.log(`Skipping duplicate job: ${job.title}`);
+          continue;
+        }
 
-      await query(
-        `INSERT INTO jobs (
-          title, description, category, company, location,
-          apply_url, posted_at, is_active, job_type, country, state, city
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-        [
-          job.title,
-          job.description,
-          inferredCategory,
-          job.company || "LinkedIn",
-          job.location || "Unknown",
-          job.applyUrl,
-          new Date(),
-          true,
-          "linkedin_detailed",
-          "United States",
-          null,
-          null,
-        ]
-      );
-      insertedCount++;
+        const inferredCategoryRaw = inferCategoryFromTitle(job.title);
+        const inferredCategory = mapCategoryToValid(inferredCategoryRaw, validCategories);
+
+        console.log(`Inserting job: ${job.title} at ${job.company}`);
+
+        await query(
+          `INSERT INTO jobs (
+            title, description, category, company, location,
+            apply_url, posted_at, is_active, job_type, country, state, city
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+          [
+            job.title,
+            job.description,
+            inferredCategory,
+            job.company || "LinkedIn",
+            job.location || "Unknown",
+            job.applyUrl,
+            new Date(),
+            true,
+            "linkedin_detailed",
+            "United States",
+            null,
+            null,
+          ]
+        );
+
+        insertedCount++;
+      } catch (error) {
+        console.error(`Failed to insert job ${job.title}:`, error);
+      }
     }
 
-    res.json({ message: `Imported ${insertedCount} new detailed jobs from LinkedIn.` });
+    console.log(`Imported ${insertedCount} new jobs from LinkedIn detailed.`);
+
+    res.json({ message: `Imported ${insertedCount} new jobs from LinkedIn detailed.` });
   })
 );
+
 
 // --------- GMAIL FETCH ROUTE WITH TOKEN REFRESH AND SAVE -----------
 

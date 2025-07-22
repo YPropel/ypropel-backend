@@ -557,62 +557,45 @@ router.post(
 
 // ---- NEW: Import newsletter jobs (e.g. WayUp, LinkedIn newsletters) ----
 // ---- NEW: Import newsletter jobs (e.g. WayUp, LinkedIn newsletters) ----
-// ---- NEW: Import newsletter jobs (e.g. WayUp, LinkedIn newsletters) ----
+// Backend route to parse LinkedIn newsletter email HTML content and import jobs
 router.post(
-  "/import-newsletter-jobs",
+  "/import-linkedin-newsletter",
   adminOnly,
   asyncHandler(async (req: AuthRequest, res: Response) => {
-    const { newsletterUrl } = req.body;
-    if (!newsletterUrl) {
-      return res.status(400).json({ error: "newsletterUrl is required in the body" });
+    const { emailHtml } = req.body;
+    if (!emailHtml) {
+      return res.status(400).json({ error: "emailHtml is required in the body" });
     }
 
+    const validCategories = await fetchJobCategories();
+    let insertedCount = 0;
+
     try {
-      const feed = await parser.parseURL(newsletterUrl);
+      // Parse the HTML email content using cheerio
+      const cheerio = (await import("cheerio")).default;
+      const $ = cheerio.load(emailHtml);
 
-      const validCategories = await fetchJobCategories();
+      // Example: LinkedIn newsletter job posts might be in <a> tags with job links or divs with job titles
+      // You will need to adjust selectors based on actual email structure
 
-      let insertedCount = 0;
+      $("a").each(async (_, elem) => {
+        const link = $(elem).attr("href") || "";
+        const title = $(elem).text().trim();
 
-      for (const item of feed.items) {
-        const title = item.title || "";
-        const description = item.content || item.contentSnippet || "";
-        const link = item.link || "";
-        const pubDate = item.pubDate ? new Date(item.pubDate) : new Date();
+        if (!title || !link) return;
 
-        if (!title || !link) continue;
-
-        // Check for duplicates by title or apply_url
+        // Avoid duplicates
         const existing = await query(
           "SELECT id FROM jobs WHERE title = $1 OR apply_url = $2",
           [title, link]
         );
-        if (existing.rows.length > 0) continue;
+        if (existing.rows.length > 0) return;
 
-        // Infer category based on title
+        // Infer category from title
         const inferredCategoryRaw = inferCategoryFromTitle(title);
         const inferredCategory = mapCategoryToValid(inferredCategoryRaw, validCategories);
 
-        // Location parsing (simple heuristic, can be improved based on feed)
-        const location = item.location || "Unknown";
-        let country = "United States";
-        let state: string | null = null;
-        let city: string | null = null;
-
-        if (typeof location === "string") {
-          const locLower = location.toLowerCase();
-          if (locLower.includes("remote")) country = "Remote";
-          else if (locLower.includes("usa") || locLower.includes("united states")) country = "United States";
-
-          const parts = location.split(",");
-          if (parts.length > 1) {
-            city = parts[0].trim();
-            state = parts[1].trim().toUpperCase();
-          } else {
-            city = location.trim();
-          }
-        }
-
+        // Default fields for newsletter jobs
         await query(
           `INSERT INTO jobs (
             title, description, category, company, location,
@@ -620,27 +603,26 @@ router.post(
           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
           [
             title,
-            description,
+            "", // No description available from simple parsing
             inferredCategory,
-            item.creator || item["dc:creator"] || "Unknown",
-            location,
+            "LinkedIn Newsletter",
+            "LinkedIn Newsletter",
             link,
-            pubDate,
+            new Date(),
             true,
-            "newsletter", // job_type for newsletter jobs
-            country,
-            state,
-            city,
+            "newsletter",
+            "United States",
+            null,
+            null,
           ]
         );
-
         insertedCount++;
-      }
+      });
 
-      res.json({ message: `Imported ${insertedCount} new jobs from newsletter.` });
+      res.json({ message: `Imported ${insertedCount} new jobs from LinkedIn newsletter.` });
     } catch (error) {
-      console.error("Error importing newsletter jobs:", error);
-      res.status(500).json({ error: "Failed to import newsletter jobs" });
+      console.error("Error importing LinkedIn newsletter jobs:", error);
+      res.status(500).json({ error: "Failed to import LinkedIn newsletter jobs" });
     }
   })
 );

@@ -1,34 +1,39 @@
 console.log("Starting backend server...");
-import dotenv from "dotenv";
 
-// Load .env only if NOT in production (optional check)
-if (process.env.NODE_ENV !== "production") {
-  dotenv.config();
-}
-
-import express, { Request, Response, NextFunction, ErrorRequestHandler } from "express";
+import express, { Request, Response, NextFunction } from "express";
 import cors from "cors";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { query } from "./db";
 import multer from "multer";
 import path from "path";
-import adminRoutes from "./adminbackend/BackendRoutes"; //--adminbackendroute
-import { OAuth2Client } from "google-auth-library";
-import { Pool } from "pg";
-import Joi from "joi";
-import rateLimit from "express-rate-limit";
 
+//import adminBackendRouter from "./adminbackend"; // This imports from adminbackend/in
+//import "./cronoldjobfairs";
+import adminRoutes from "./adminbackend/BackendRoutes"; //--adminbackendroute
+
+import { OAuth2Client } from "google-auth-library";
+
+//import adminRoutes from "./adminbackend/BackendRoutes";
+// Import the job import routes from adminbackend/index.ts
+//import importJobsRoutes from "./adminbackend/index";
+
+
+import { Pool } from "pg";
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL, // or your config
   // other config options if needed
 });
+
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+
+
+
+
 const multerMemoryStorage = multer.memoryStorage();
 const uploadMemory = multer({ storage: multerMemoryStorage });
 
-//---------------
 
 declare global {
   namespace Express {
@@ -38,46 +43,32 @@ declare global {
   }
 }
 
-//-------
 
-
-//----------------
 const app = express();
-app.set('trust proxy', 1); 
-app.use(
-  cors({
-    origin: [
-      "https://www.ypropel.com",
-      "https://ypropel-frontend.onrender.com",
-      "http://localhost:3000",
-    ],
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    credentials: true,
-  })
-);
-
-
-app.use((req, res, next) => {
-  res.setHeader("Cross-Origin-Opener-Policy", "same-origin-allow-popups");
-  res.setHeader("Cross-Origin-Embedder-Policy", "unsafe-none");
-  next();
-});
-
-//--------------
+app.use(cors());
 app.use(express.json()); 
+
 app.use("/admin", adminRoutes); //--adminbackendroute
 
 import { v2 as cloudinary } from "cloudinary";
 import { CloudinaryStorage } from "multer-storage-cloudinary";
 
-
+// 🔐 Replace with your actual Cloudinary credentials
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME!,
   api_key: process.env.CLOUDINARY_API_KEY!,
   api_secret: process.env.CLOUDINARY_API_SECRET!,
 });
-//--------------
 
+
+
+/*const storage = new CloudinaryStorage({
+  cloudinary,
+  params: async (req, file) => ({
+    folder: "ypropel-news", // ✅ Correct way to set folder
+   allowed_formats: ["jpg", "jpeg", "png", "mp4", "mov", "avi"], // added video formats
+  }),
+});*/
 const storage = new CloudinaryStorage({
   cloudinary,
   params: async (req, file) => {
@@ -91,10 +82,12 @@ const storage = new CloudinaryStorage({
     };
   },
 });
-//-----------------
+
 
 const upload = multer({ storage });
+
 const port = 4000;
+
 const JWT_SECRET = process.env.JWT_SECRET || "your_jwt_secret_key";
 
 console.log(
@@ -103,17 +96,12 @@ console.log(
     ? "DEFAULT SECRET (please set env JWT_SECRET!)"
     : "SECRET SET FROM ENV"
 );
-//-------------------
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 10, // limit each IP to 10 requests per windowMs
-  message: "Too many requests from this IP, please try again later.",
-});
 
-
-//--------------------
-
+app.use(cors());
+app.use(express.json());
 app.use("/uploads", express.static("uploads"));
+
+
 
 function asyncHandler(
   fn: (req: Request, res: Response, next: NextFunction) => Promise<any>
@@ -124,30 +112,24 @@ function asyncHandler(
 }
 
 
+
+
 // Middleware for token authentication (use this for protected routes)
 import { sendEmail } from "./utils/sendEmail"; // ⬅️ make sure this is at the top of your file if not already
 
 // ----------- Password Reset Request Route -----------
-const googleLoginSchema = Joi.object({
-  tokenId: Joi.string().required(),
-});
-
 app.post(
   "/auth/google-login",
-authLimiter,
   asyncHandler(async (req: Request, res: Response) => {
     try {
-       const { error } = googleLoginSchema.validate(req.body);
-        if (error) {
-          return res.status(400).json({ error: error.details[0].message }); 
-        }
-        const { tokenId } = req.body;
-console.log("GOOGLE_CLIENT_ID used:", process.env.GOOGLE_CLIENT_ID);
+      const { tokenId } = req.body;
+      if (!tokenId) {
+        return res.status(400).json({ error: "tokenId is required" });
+      }
 
       const ticket = await googleClient.verifyIdToken({
         idToken: tokenId,
-       audience: "938087062402-qd6197ojngi159r8p1tgug34d3o0m5e8.apps.googleusercontent.com",
-
+        audience: process.env.GOOGLE_CLIENT_ID,
       });
       const payload = ticket.getPayload();
       if (!payload) {
@@ -193,63 +175,51 @@ console.log("GOOGLE_CLIENT_ID used:", process.env.GOOGLE_CLIENT_ID);
   })
 );
 
-//----------------------forget Password route------------------
-const forgotPasswordSchema = Joi.object({
-  email: Joi.string().email().required(),
-});
+
 app.post(
   "/auth/forgot-password",
-  authLimiter,
   asyncHandler(async (req: Request, res: Response) => {
-    const { error } = forgotPasswordSchema.validate(req.body);
-    if (error) {
-      return res.status(400).json({ error: error.details[0].message });
-    }
     const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ error: "Email is required" });
+    }
+
     const result = await query("SELECT * FROM users WHERE email = $1", [email]);
     if (result.rows.length === 0) {
       return res.status(404).json({ error: "No account found with this email" });
     }
 
     const user = result.rows[0];
-    const token = jwt.sign(
-    {
-     userId: user.id,
-     email: user.email,         // Optional, but helpful
-     is_admin: user.is_admin,   // ✅ Required for admin access on frontend
-    },
-    JWT_SECRET,
-    { expiresIn: "1h" }
-    );
-    const resetLink = `https://www.ypropel.com/reset-password?token=${token}`;
-      await sendEmail(
-      email,
-         "Reset your YPropel password",
-      `<p>You requested a password reset.</p><p><a href="${resetLink}">Click here to reset your password</a></p>`
-      );
-      res.json({ message: "Password reset email sent" });
-     })
+   const token = jwt.sign(
+  {
+    userId: user.id,
+    email: user.email,         // Optional, but helpful
+    is_admin: user.is_admin,   // ✅ Required for admin access on frontend
+  },
+  JWT_SECRET,
+  { expiresIn: "1h" }
 );
-//--------------------------------------------------------
-//--------------------Reset password route---------------
-const resetPasswordSchema = Joi.object({
-  token: Joi.string().required(),
-  newPassword: Joi.string().min(8).required(), // Enforce min length (adjust as needed)
-});
+
+
+    const resetLink = `http://localhost:3000/reset-password?token=${token}`;
+
+    await sendEmail(
+  email,
+  "Reset your YPropel password",
+  `<p>You requested a password reset.</p><p><a href="${resetLink}">Click here to reset your password</a></p>`
+);
+
+
+    res.json({ message: "Password reset email sent" });
+  })
+);
+
+
 app.post(
   "/auth/reset-password",
-   authLimiter,
   asyncHandler(async (req: Request, res: Response) => {
-    const { error } = resetPasswordSchema.validate(req.body);
-    if (error) {
-      return res.status(400).json({ error: error.details[0].message });
-    }
     const { token, newPassword } = req.body;
-
-   // const { error } = resetPasswordSchema.validate(req.body);
-   // if (error) {
-     //  return res.status(400).json({ error: error.details[0].message }); 
-      //}
 
     if (!token || !newPassword) {
       return res.status(400).json({ error: "Token and new password are required" });
@@ -273,7 +243,37 @@ app.post(
   })
 );
 
+/*function authenticateToken(req: Request, res: Response, next: NextFunction): void {
+  const authHeader = req.headers["authorization"];
+  //console.log("🔥 Auth header:", authHeader);
 
+  const token = authHeader?.split(" ")[1];
+
+  if (!token) {
+    console.log("⚠️ No token found in Authorization header");
+    return ;
+  }
+
+  jwt.verify(token, JWT_SECRET, (err, decoded) => {
+    if (err) {
+      console.log("❌ JWT verification failed:", err.message);
+      return ;
+    }
+
+    //console.log("✅ JWT verified. Decoded payload:", decoded);
+
+    // Cast decoded payload
+    const payload = decoded as { userId: number; email?: string; is_admin?: boolean };
+
+    req.user = {
+      userId: payload.userId,
+      email: payload.email,
+      isAdmin: payload.is_admin || false,
+    };
+
+    next();
+  });
+} */
 
 class AuthError extends Error {
   statusCode: number;
@@ -309,7 +309,7 @@ function authenticateToken(req: Request, res: Response, next: NextFunction): voi
 }
 
 
-//---------------------------------------
+//-------------------
 const defaultProfilePhotos = [
   "https://res.cloudinary.com/denggbgma/image/upload/v<version>/ypropel-users/default-profile1.png",
 ];
@@ -1706,6 +1706,14 @@ app.get(
   
     const ownerEmail = (_req.query.ownerEmail as string) || null;
      const circleName = (_req.query.circleName as string) || null;
+
+   /* const circles = await query(
+      `SELECT sc.id, sc.name, sc.is_public, sc.created_at, sc.user_id AS created_by, u.name AS creator
+       FROM study_circles sc
+       JOIN users u ON sc.user_id = u.id
+       ORDER BY sc.created_at DESC`
+    );*/
+
     const  results = await query(
        `SELECT sc.id, sc.name, sc.is_public, sc.created_at, sc.user_id AS created_by, u.name AS creator, u.email AS owner_email
        FROM study_circles sc
@@ -1748,6 +1756,9 @@ app.get(
     res.json(Array.from(circleMap.values()));
   })
 );
+
+
+
 
 
 //----------------------Circle messaging -------------
@@ -1868,7 +1879,38 @@ app.get("/users/search", authenticateToken, async (req: Request, res: Response):
   }
 });
 
+
+
+
 //---------------------------------------
+
+   
+// -------- Get user by ID (protected) --------
+//-- Before new edit profile
+/* app.get(
+  "/users/:id",
+  authenticateToken,
+  asyncHandler(async (req: Request, res: Response) => {
+    const userId = parseInt(req.params.id, 10);
+
+    if (isNaN(userId)) {
+      return res.status(400).json({ error: "Invalid user ID" });
+    }
+
+    const result = await query(
+      `SELECT id, name, email, title, university, major, experience_level, skills, company,
+        courses_completed, country, birthdate, volunteering_work, projects_completed, photo_url
+      FROM users WHERE id = $1`,
+      [userId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    res.json(result.rows[0]);
+  })
+);*/
 app.get(
   "/users/:id",
   authenticateToken,
@@ -1899,6 +1941,10 @@ app.get(
     res.json(result.rows[0]);
   })
 );
+
+
+
+
 
 //---------Join- leave Circles logic------------------
 app.post(
@@ -2043,7 +2089,9 @@ app.post(
   })
 );
 
-//---------------
+
+
+// POST /api/videos/:id/like - toggle like
 // POST /api/videos/:id/like - toggle like
 app.post(
   "/api/videos/:id/like",
@@ -2718,6 +2766,33 @@ app.delete(
 //----------------------------------------------------------------------------------
 //-------AdminNews Delete Route--- Delete news and updates news
 
+/*---before new edit profile
+app.delete("/admin/news/:id", (req: Request, res: Response) => {
+  (async () => {
+    
+    const token = req.headers.authorization?.split(" ")[1];
+    if (!token) return res.status(401).json({ error: "Unauthorized" });
+
+    try {
+      const decoded: any = jwt.verify(token, JWT_SECRET);
+      if (!decoded.is_admin) {
+        return res.status(403).json({ error: "Access denied. Admins only." });
+      }
+
+      const newsId = parseInt(req.params.id);
+      if (isNaN(newsId)) {
+        return res.status(400).json({ error: "Invalid news ID" });
+      }
+
+      await query("DELETE FROM news WHERE id = $1", [newsId]);
+      res.json({ message: "News item deleted successfully" });
+    } catch (err) {
+      console.error("Error deleting news:", err);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  })();
+}); */
+
 app.delete("/admin/news/:id", authenticateToken, asyncHandler(async (req, res) => {
   // Check admin rights via req.user.isAdmin, no need to decode JWT again
   console.log("req.user in DELETE:", req.user);
@@ -2739,6 +2814,8 @@ app.delete("/admin/news/:id", authenticateToken, asyncHandler(async (req, res) =
 //------------Pre college summer programs Admin routes------------
 //----Add pre-college-summer program by Admin---
 // Admin-only: Add a new summer program
+
+
 
 app.post("/admin/summer-programs", async (req: Request, res: Response) => {
   const {
@@ -2774,6 +2851,34 @@ app.post("/admin/summer-programs", async (req: Request, res: Response) => {
   }
 });
 
+//-------------Delete pre-college summer program by Admin------
+/*--- before new edit profile
+// ✅ Delete a summer program (admin only)
+app.delete("/admin/summer-programs/:id", (req: Request, res: Response) => {
+  (async () => {
+    const token = req.headers.authorization?.split(" ")[1];
+    if (!token) return res.status(401).json({ error: "Unauthorized" });
+
+    try {
+      const decoded: any = jwt.verify(token, JWT_SECRET);
+     const isAdmin = decoded.isAdmin ?? decoded.is_admin;
+if (!isAdmin) {
+  return res.status(403).json({ error: "Access denied. Admins only." });
+}
+
+
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+
+      await query("DELETE FROM pre_college_summer_programs WHERE id = $1", [id]);
+
+      res.json({ message: "Summer program deleted successfully" });
+    } catch (err) {
+      console.error("Error deleting summer program:", err);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  })();
+});*/
 app.delete(
   "/admin/summer-programs/:id",
   authenticateToken,
@@ -2889,6 +2994,16 @@ app.get("/job-fairs", async (req: Request, res: Response) => {
 
 //--------get US states and cities for Job fair drop down list in for Admin
 
+// ✅ GET /us-states
+/*app.get("/us-states", async (req: Request, res: Response) => {
+  try {
+    const result = await query("SELECT name FROM us_states ORDER BY name ASC");
+    res.json(result.rows.map((r) => r.name));
+  } catch (err) {
+    console.error("Failed to fetch states:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+});*/
 app.get("/us-states", async (req: Request, res: Response) => {
   try {
     const result = await query("SELECT name, abbreviation FROM us_states ORDER BY name ASC");
@@ -2902,6 +3017,39 @@ app.get("/us-states", async (req: Request, res: Response) => {
 
 
 //----------Get job-fair cities for the selected states to display on the dropdown-----
+// ✅ GET /us-cities?state=Texas
+/*app.get(
+  "/us-cities",
+  asyncHandler(async (req: Request, res: Response) => {
+    const stateName = req.query.state as string;
+
+    if (!stateName || !stateName.trim()) {
+      return res.status(400).json({ error: "Missing or invalid state name" });
+    }
+
+               // Get the ID of the state
+    const stateResult = await query(
+      "SELECT id FROM us_states WHERE name = $1",
+      [stateName.trim()]
+    );
+
+    if (stateResult.rows.length === 0) {
+      return res.status(404).json({ error: "State not found" });
+    }
+
+    const stateId = stateResult.rows[0].id;
+
+    // Get cities with that state_id
+    const cityResult = await query(
+      "SELECT name FROM us_cities WHERE state_id = $1 ORDER BY name ASC",
+      [stateId]
+    );
+
+    const cities = cityResult.rows.map((row) => row.name);
+    res.json(cities);
+  })
+);*/
+
 app.get(
   "/us-cities",
   asyncHandler(async (req: Request, res: Response) => {
@@ -3352,7 +3500,41 @@ app.delete(
 
 // Public: Get all active jobs for users
 // Public: Get all active jobs, optionally filtered by job_type
+/*app.get(
+  "/jobs",
+  asyncHandler(async (req: Request, res: Response) => {
+    const { job_type, country, state, city, category } = req.query;
 
+    let queryStr = "SELECT * FROM jobs WHERE is_active = TRUE";
+    const params: any[] = [];
+    
+    if (job_type) {
+      params.push(job_type);
+      queryStr += ` AND job_type = $${params.length}`;
+    }
+    if (country) {
+      params.push(country);
+      queryStr += ` AND country = $${params.length}`;
+    }
+    if (state) {
+      params.push(state);
+      queryStr += ` AND state = $${params.length}`;
+    }
+    if (city) {
+      params.push(city);
+      queryStr += ` AND city = $${params.length}`;
+    }
+    if (category) {
+      params.push(category);
+      queryStr += ` AND category = $${params.length}`;
+    }
+
+    queryStr += " ORDER BY posted_at DESC";
+
+    const result = await query(queryStr, params);
+    res.json(result.rows);
+  })
+); */
 app.get(
   "/jobs",
   asyncHandler(async (req: Request, res: Response) => {
@@ -3415,7 +3597,31 @@ app.get(
 //----------Delete Job Fairs by Admin
 
 // ✅ DELETE /admin/job-fairs/:id
+/* ----before new edit profile
+app.delete(
+  "/admin/job-fairs/:id",
+  authenticateToken,
+  asyncHandler(async (req: Request, res: Response) => {
+    const token = req.headers.authorization?.split(" ")[1];
+    if (!token) return res.status(401).json({ error: "Unauthorized" });
 
+    const decoded: any = jwt.verify(token, JWT_SECRET);
+    if (!decoded.is_admin && !decoded.isAdmin) {
+      return res.status(403).json({ error: "Admins only" });
+    }
+
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+
+    try {
+      await query("DELETE FROM job_fairs WHERE id = $1", [id]);
+      res.json({ message: "Job fair deleted successfully" });
+    } catch (err) {
+      console.error("Failed to delete job fair:", err);
+      res.status(500).json({ error: "Server error" });
+    }
+  })
+); */
 app.delete(
   "/admin/job-fairs/:id",
   authenticateToken,
@@ -3440,6 +3646,25 @@ app.delete(
 //--------------------------------------
 //-------Add articles by Admin backend
 // POST /admin/articles — Create a new article (admin only)
+/* -- Before new edit profile 
+
+app.get(
+  "/admin/articles",
+  authenticateToken,
+  asyncHandler(async (req: Request, res: Response) => {
+    const token = req.headers.authorization?.split(" ")[1];
+    if (!token) return res.status(401).json({ error: "Unauthorized" });
+
+    const decoded: any = jwt.verify(token, JWT_SECRET as string);
+    if (!decoded.is_admin) return res.status(403).json({ error: "Admins only" });
+
+    const result = await query(
+      "SELECT id, title, content, cover_image, author_id, published_at FROM articles ORDER BY published_at DESC"
+    );
+
+    res.json(result.rows);
+  })
+);  */
 
 app.get(
   "/admin/articles",
@@ -3484,7 +3709,45 @@ app.post(
 );
 
 
+//----- importentry level jobs route-(main route code is in AdminRoutes.tsx-
+//app.use("/admin", adminBackendRouter);
+
+
+
+
 //--------Add added articles lists to admin page so they can edit and delete
+/* before edit  new profile 
+app.put(
+  "/admin/articles/:id",
+  authenticateToken,
+  asyncHandler(async (req: Request, res: Response) => {
+    const articleId = parseInt(req.params.id);
+    if (isNaN(articleId)) {
+      return res.status(400).json({ error: "Invalid article ID" });
+    }
+
+    const { title, content, cover_image } = req.body;
+
+    const token = req.headers.authorization?.split(" ")[1];
+    if (!token) return res.status(401).json({ error: "Unauthorized" });
+
+    const decoded: any = jwt.verify(token, JWT_SECRET as string);
+    if (!decoded.is_admin) return res.status(403).json({ error: "Admins only" });
+
+    if (!title || !content) {
+      return res.status(400).json({ error: "Title and content are required" });
+    }
+
+    await query(
+      `UPDATE articles
+       SET title = $1, content = $2, cover_image = $3, updated_at = NOW()
+       WHERE id = $4`,
+      [title, content, cover_image || null, articleId]
+    );
+
+    res.json({ message: "✅ Article updated successfully" });
+  })
+);*/
 
 app.put(
   "/admin/articles/:id",
@@ -3644,21 +3907,7 @@ app.get('/articles/:id/likes', authenticateToken, asyncHandler(async (req: Reque
     console.error("Error checking DB:", err);
   }
 })();
-
-//--------------error-handling middleware block---------------
-const errorHandler: ErrorRequestHandler = (err, req, res, next): void => {
-  if (err instanceof AuthError) {
-    res.status(err.statusCode).json({ error: err.message });
-    return;  // return void here
-  }
-  console.error("Unhandled error:", err);
-  res.status(500).json({ error: "Internal Server Error" });
-  return;  // return void here
-};
-
-app.use(errorHandler);
-
-//-----------------------------------
+//-------------
 
 app.listen(port, () => {
   console.log(`Server running on http://localhost:${port}`);

@@ -314,6 +314,7 @@ interface EmailData {
   threadId?: string | null;
 }
 
+console.log("Registering /fetch-gmail-emails route");
 router.post(
   "/fetch-gmail-emails",
   adminOnly,

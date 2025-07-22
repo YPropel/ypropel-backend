@@ -146,7 +146,8 @@ console.log("GOOGLE_CLIENT_ID used:", process.env.GOOGLE_CLIENT_ID);
 
       const ticket = await googleClient.verifyIdToken({
         idToken: tokenId,
-        audience: process.env.GOOGLE_CLIENT_ID,
+       audience: "938087062402-qd6197ojngi159r8p1tgug34d3o0m5e8.apps.googleusercontent.com",
+
       });
       const payload = ticket.getPayload();
       if (!payload) {

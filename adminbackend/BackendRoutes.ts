@@ -1,7 +1,8 @@
 import express, { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import axios from "axios";
-import cheerio from "cheerio";
+const cheerio = require("cheerio");
+
 import { query } from "../db";
 import { google } from "googleapis";
 

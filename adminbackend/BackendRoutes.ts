@@ -4,7 +4,8 @@ import axios from "axios";
 import { query } from "../db";
 import { google } from "googleapis";
 
-
+import fs from "fs";
+import path from "path";
 
 import Parser from "rss-parser";
 
@@ -199,7 +200,6 @@ router.post(
   adminOnly,
   asyncHandler(async (req: AuthRequest, res: Response) => {
     // ... existing Adzuna import code ...
-    // (omitted here for brevity, unchanged from your original)
   })
 );
 
@@ -209,22 +209,19 @@ router.post(
   adminOnly,
   asyncHandler(async (req: AuthRequest, res: Response) => {
     // ... existing Careerjet import code ...
-    // (omitted here for brevity, unchanged from your original)
   })
 );
 
 //-----------------
 
-// New route: fetch emails from Gmail API for admin use
-// New route: fetch emails from Gmail API for admin use
+// Gmail fetch route
 
-// Define interface for email data with payload as any
 interface EmailData {
   id: string;
   snippet?: string | null;
-  payload?: any; // changed from gmail_v1.Schema$MessagePart to any
+  payload?: any; // relaxed typing
   internalDate?: string | null;
-  threadId?: string;
+  threadId?: string | null;
 }
 
 router.post(
@@ -232,28 +229,36 @@ router.post(
   authenticateToken,
   adminOnly,
   asyncHandler(async (req: AuthRequest, res: Response) => {
-    const { accessToken } = req.body;
-
-    if (!accessToken) {
-      return res.status(400).json({ error: "accessToken is required in request body" });
-    }
-
     try {
-      // Initialize OAuth2 client with access token
-      const oauth2Client = new google.auth.OAuth2();
-      oauth2Client.setCredentials({ access_token: accessToken });
+      const tokenPath = path.join(__dirname, "token.json");
+      if (!fs.existsSync(tokenPath)) {
+        return res.status(500).json({ error: "No saved Google OAuth token found." });
+      }
+
+      const tokens = JSON.parse(fs.readFileSync(tokenPath, "utf-8"));
+
+      const oauth2Client = new google.auth.OAuth2(
+        process.env.GOOGLE_CLIENT_ID,
+        process.env.GOOGLE_CLIENT_SECRET,
+        process.env.GOOGLE_REDIRECT_URI
+      );
+      oauth2Client.setCredentials(tokens);
+
+      const accessTokenResponse = await oauth2Client.getAccessToken();
+      const accessToken = accessTokenResponse.token;
+      if (!accessToken) {
+        return res.status(500).json({ error: "Failed to get access token" });
+      }
 
       const gmail = google.gmail({ version: "v1", auth: oauth2Client });
 
-      // Fetch list of messages from Gmail inbox
       const listResponse = await gmail.users.messages.list({
         userId: "me",
-        maxResults: 10, // adjust as needed
-        q: "label:INBOX", // search query if needed
+        maxResults: 10,
+        q: "label:INBOX",
       });
 
       const messages = listResponse.data.messages || [];
-
       const emailData: EmailData[] = [];
 
       for (const message of messages) {
@@ -263,14 +268,13 @@ router.post(
           format: "full",
         });
 
-        interface EmailData {
-          id: string;
-          snippet?: string | null;
-          payload?: any;
-          internalDate?: string | null;
-          threadId?: string | null;  // <-- allow null here
-        }
-
+        emailData.push({
+          id: message.id!,
+          snippet: msg.data.snippet,
+          payload: msg.data.payload,
+          internalDate: msg.data.internalDate || null,
+          threadId: msg.data.threadId || null,
+        });
       }
 
       res.json({ emails: emailData });
@@ -281,15 +285,12 @@ router.post(
   })
 );
 
-
-
 // ----------------- SIMPLYHIRED IMPORT -------------------
 router.post(
   "/import-simplyhired-jobs",
   adminOnly,
   asyncHandler(async (req: AuthRequest, res: Response) => {
     // ... existing SimplyHired import code ...
-    // (omitted here for brevity, unchanged from your original)
   })
 );
 

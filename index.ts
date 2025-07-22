@@ -33,17 +33,25 @@ declare global {
 
 //----------------
 const app = express();
-app.use(
-  cors({
-    origin: [
-      "https://www.ypropel.com",
-      "https://ypropel-frontend.onrender.com",
-      "http://localhost:3000",
-    ],
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    credentials: true,
-  })
-);
+
+const allowedOrigins = ["https://ypropel-frontend.onrender.com", "https://www.ypropel.com"];
+
+app.use(cors({
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      callback(new Error("Not allowed by CORS"));
+    }
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "Accept"],
+}));
+
+// Handle OPTIONS preflight
+app.options("*", cors());
+
 
 //--------------
 app.use(express.json()); 

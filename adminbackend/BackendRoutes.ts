@@ -5,7 +5,7 @@ const cheerio = require("cheerio");
 
 import { query } from "../db";
 import { google } from "googleapis";
-
+import puppeteer from "puppeteer";
 
 
 import fs from "fs";
@@ -244,6 +244,13 @@ router.post(
 );
 
 // ----------------- LINKEDIN NEWSLETTER IMPORT -------------------
+interface Job {
+  title: string;
+  company: string;
+  location: string;
+  description: string;
+  applyUrl: string;
+}
 router.post(
   "/import-linkedin-detailed-jobs",
   adminOnly,
@@ -256,60 +263,68 @@ router.post(
       const $email = cheerio.load(emailHtml);
       const link = $email("a:contains('See all jobs')").attr("href");
       if (!link) {
-        console.error("Could not find 'See all jobs' link in email HTML");
         return res.status(400).json({ error: "Could not find 'See all jobs' link in email HTML" });
       }
       urlToFetch = link;
     }
 
     if (!urlToFetch) {
-      console.error("No 'See all jobs' URL provided or found");
       return res.status(400).json({ error: "No 'See all jobs' URL provided or found" });
     }
 
-    // Fetch LinkedIn jobs page HTML
-    console.log(`Fetching LinkedIn jobs page from URL: ${urlToFetch}`);
-    const response = await axios.get(urlToFetch, {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
-      },
+    console.log(`Launching Puppeteer to scrape LinkedIn jobs from: ${urlToFetch}`);
+
+    const browser = await puppeteer.launch({
+      args: ["--no-sandbox", "--disable-setuid-sandbox"],
+      headless: true,
+    });
+    const page = await browser.newPage();
+
+    await page.setUserAgent(
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
+    );
+
+    await page.goto(urlToFetch, { waitUntil: "networkidle2" });
+
+    await page.waitForSelector(".jobs-search-results__list", { timeout: 15000 }).catch(() => {});
+
+    const jobs: Job[] = await page.evaluate(() => {
+      const jobElements = document.querySelectorAll(".jobs-search-results__list-item");
+      const jobList: Job[] = [];
+
+      jobElements.forEach((jobEl) => {
+        const titleEl = jobEl.querySelector("a.job-card-list__title, a.base-card__full-link");
+        const companyEl = jobEl.querySelector("a.job-card-container__company-name, h4.base-search-card__subtitle");
+        const locationEl = jobEl.querySelector(".job-card-container__metadata-item, span.job-search-card__location");
+        const descriptionEl = jobEl.querySelector(".job-card-list__snippet, p.job-snippet, div.job-card-container__description");
+
+        if (titleEl) {
+          jobList.push({
+            title: titleEl.textContent?.trim() || "",
+            company: companyEl?.textContent?.trim() || "",
+            location: locationEl?.textContent?.trim() || "",
+            description: descriptionEl?.textContent?.trim() || "",
+            applyUrl: titleEl.getAttribute("href") || "",
+          });
+        }
+      });
+
+      return jobList;
     });
 
-    const $ = cheerio.load(response.data);
+    await browser.close();
+
+    console.log(`Puppeteer scraped ${jobs.length} jobs.`);
 
     const validCategories = await fetchJobCategories();
-
-    const jobs: Array<{
-      title: string;
-      company: string;
-      location: string;
-      description: string;
-      applyUrl: string;
-    }> = [];
-
-    $(".jobs-search-results__list-item").each((_, elem) => {
-      const el = $(elem);
-
-      const title = el.find("a.job-card-list__title, a.base-card__full-link").text().trim();
-      const company = el.find("a.job-card-container__company-name, h4.base-search-card__subtitle").text().trim();
-      const location = el.find(".job-card-container__metadata-item, span.job-search-card__location").text().trim();
-      const applyUrl = el.find("a.job-card-list__title, a.base-card__full-link").attr("href") || "";
-      const description =
-        el.find(".job-card-list__snippet, p.job-snippet, div.job-card-container__description").text().trim() || "";
-
-      if (title && applyUrl) {
-        jobs.push({ title, company, location, description, applyUrl });
-      }
-    });
-
-    console.log(`Found ${jobs.length} jobs on LinkedIn page.`);
-
     let insertedCount = 0;
+
     for (const job of jobs) {
       try {
-        const exists = await query("SELECT id FROM jobs WHERE title = $1 AND apply_url = $2", [job.title, job.applyUrl]);
-
+        const exists = await query("SELECT id FROM jobs WHERE title = $1 AND apply_url = $2", [
+          job.title,
+          job.applyUrl,
+        ]);
         if (exists.rows.length > 0) {
           console.log(`Skipping duplicate job: ${job.title}`);
           continue;
@@ -340,19 +355,15 @@ router.post(
             null,
           ]
         );
-
         insertedCount++;
       } catch (error) {
         console.error(`Failed to insert job ${job.title}:`, error);
       }
     }
 
-    console.log(`Imported ${insertedCount} new jobs from LinkedIn detailed.`);
-
     res.json({ message: `Imported ${insertedCount} new jobs from LinkedIn detailed.` });
   })
 );
-
 
 // --------- GMAIL FETCH ROUTE WITH TOKEN REFRESH AND SAVE -----------
 

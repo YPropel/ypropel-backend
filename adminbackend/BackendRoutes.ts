@@ -1,8 +1,11 @@
 import express, { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import axios from "axios";
+import cheerio from "cheerio";
 import { query } from "../db";
 import { google } from "googleapis";
+
+
 
 import fs from "fs";
 import path from "path";
@@ -422,6 +425,117 @@ function parseJobsFromEmailText(text: string): JobFromEmail[] {
   }
   return jobs;
 }
+
+// New route to import LinkedIn jobs from "See all jobs" page URL or from emailHtml
+router.post(
+  "/import-linkedin-detailed-jobs",
+  adminOnly,
+  asyncHandler(async (req: AuthRequest, res: Response) => {
+    const { emailHtml, seeAllJobsUrl } = req.body;
+
+    let urlToFetch = seeAllJobsUrl;
+
+    // If only emailHtml is provided, try to extract "See all jobs" link from it
+    if (!urlToFetch && emailHtml) {
+      const $email = cheerio.load(emailHtml);
+      const link = $email("a:contains('See all jobs')").attr("href");
+      if (!link) {
+        return res.status(400).json({ error: "Could not find 'See all jobs' link in email HTML" });
+      }
+      urlToFetch = link;
+    }
+
+    if (!urlToFetch) {
+      return res.status(400).json({ error: "No 'See all jobs' URL provided or found" });
+    }
+
+    // Fetch LinkedIn jobs page HTML
+    const response = await axios.get(urlToFetch, {
+      headers: {
+        // Mimic a browser user agent
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
+        // Add any LinkedIn cookies or auth headers here if needed to access the page
+      },
+    });
+
+    const $ = cheerio.load(response.data);
+
+    const validCategories = await fetchJobCategories();
+
+    const jobs: Array<{
+      title: string;
+      company: string;
+      location: string;
+      description: string;
+      applyUrl: string;
+    }> = [];
+
+    // NOTE: LinkedIn DOM structure can change frequently. Adjust selectors accordingly.
+
+    $(".jobs-search-results__list-item").each((_, elem) => {
+      const el = $(elem);
+
+      // Job title
+      const title = el.find("a.job-card-list__title, a.base-card__full-link").text().trim();
+
+      // Company name
+      const company = el.find("a.job-card-container__company-name, h4.base-search-card__subtitle").text().trim();
+
+      // Location
+      const location = el.find(".job-card-container__metadata-item, span.job-search-card__location").text().trim();
+
+      // Apply URL
+      const applyUrl = el.find("a.job-card-list__title, a.base-card__full-link").attr("href") || "";
+
+      // Description snippet (LinkedIn usually does not have full description on listing page)
+      const description = el.find(".job-card-list__snippet, p.job-snippet, div.job-card-container__description").text().trim() || "";
+
+      if (title && applyUrl) {
+        jobs.push({ title, company, location, description, applyUrl });
+      }
+    });
+
+    // Insert into DB if not duplicate
+    let insertedCount = 0;
+    for (const job of jobs) {
+      // Check for existing job by title + applyUrl
+      const exists = await query(
+        "SELECT id FROM jobs WHERE title = $1 AND apply_url = $2",
+        [job.title, job.applyUrl]
+      );
+      if (exists.rows.length > 0) continue;
+
+      const inferredCategoryRaw = inferCategoryFromTitle(job.title);
+      const inferredCategory = mapCategoryToValid(inferredCategoryRaw, validCategories);
+
+      await query(
+        `INSERT INTO jobs (
+          title, description, category, company, location,
+          apply_url, posted_at, is_active, job_type, country, state, city
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+        [
+          job.title,
+          job.description,
+          inferredCategory,
+          job.company || "LinkedIn",
+          job.location || "Unknown",
+          job.applyUrl,
+          new Date(),
+          true,
+          "linkedin_detailed",
+          "United States",
+          null,
+          null,
+        ]
+      );
+      insertedCount++;
+    }
+
+    res.json({ message: `Imported ${insertedCount} new detailed jobs from LinkedIn.` });
+  })
+);
+
+
 
 router.post(
   "/import-jobs-from-email",

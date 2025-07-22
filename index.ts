@@ -1,7 +1,7 @@
 console.log("Starting backend server...");
 
 import express, { Request, Response, NextFunction } from "express";
-//import cors from "cors";
+import cors from "cors";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { query } from "./db";
@@ -45,7 +45,7 @@ declare global {
 
 
 const app = express();
-//app.use(cors());
+app.use(cors());
 app.use(express.json()); 
 
 app.use("/admin", adminRoutes); //--adminbackendroute
@@ -97,7 +97,7 @@ console.log(
     : "SECRET SET FROM ENV"
 );
 
-//app.use(cors());
+app.use(cors());
 app.use(express.json());
 app.use("/uploads", express.static("uploads"));
 

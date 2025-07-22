@@ -35,11 +35,16 @@ declare global {
 const app = express();
 app.use(
   cors({
-    origin: ["https://www.ypropel.com"], // Replace with your frontend URL
+    origin: [
+      "https://www.ypropel.com",
+      "https://ypropel-frontend.onrender.com",
+      "http://localhost:3000",
+    ],
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     credentials: true,
   })
 );
+
 //--------------
 app.use(express.json()); 
 app.use("/admin", adminRoutes); //--adminbackendroute

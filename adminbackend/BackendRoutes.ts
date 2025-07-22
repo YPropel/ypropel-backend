@@ -455,6 +455,108 @@ router.post(
 );
 
 
+
+router.post(
+  "/import-wayup-detailed-jobs",
+  adminOnly,
+  asyncHandler(async (req: AuthRequest, res) => {
+    const { emailHtml, seeAllJobsUrl } = req.body;
+
+    let htmlToParse = "";
+
+    if (seeAllJobsUrl) {
+      // Fetch WayUp jobs page HTML
+      try {
+        const response = await axios.get(seeAllJobsUrl, {
+          headers: {
+            "User-Agent":
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
+          },
+        });
+        htmlToParse = response.data;
+      } catch (error) {
+        console.error("Failed to fetch WayUp jobs page:", error);
+        return res.status(500).json({ error: "Failed to fetch WayUp jobs page" });
+      }
+    } else if (emailHtml) {
+      htmlToParse = emailHtml;
+    } else {
+      return res.status(400).json({ error: "Either emailHtml or seeAllJobsUrl is required" });
+    }
+
+    const $ = cheerio.load(htmlToParse);
+    const validCategories = await fetchJobCategories();
+
+    const jobs: Array<{
+      title: string;
+      company: string;
+      location: string;
+      description: string;
+      applyUrl: string;
+    }> = [];
+
+    // Selector example based on WayUp’s jobs page HTML structure - adjust if needed
+    $(".job-listing, .job-card").each((_, el) => {
+      const el$ = $(el);
+      const title = el$.find(".job-title, h3").text().trim();
+      const company = el$.find(".company-name").text().trim();
+      const location = el$.find(".job-location").text().trim();
+      const description = el$.find(".job-description").text().trim();
+      const applyUrl = el$.find("a.apply-button, a.job-link").attr("href") || "";
+
+      if (title && applyUrl) {
+        jobs.push({ title, company, location, description, applyUrl });
+      }
+    });
+
+    console.log(`Parsed ${jobs.length} jobs from WayUp.`);
+
+    let insertedCount = 0;
+
+    for (const job of jobs) {
+      try {
+        const exists = await query("SELECT id FROM jobs WHERE title = $1 AND apply_url = $2", [
+          job.title,
+          job.applyUrl,
+        ]);
+
+        if (exists.rows.length > 0) {
+          console.log(`Skipping duplicate job: ${job.title}`);
+          continue;
+        }
+
+        const inferredCategoryRaw = inferCategoryFromTitle(job.title);
+        const inferredCategory = mapCategoryToValid(inferredCategoryRaw, validCategories);
+
+        await query(
+          `INSERT INTO jobs (
+            title, description, category, company, location,
+            apply_url, posted_at, is_active, job_type, country, state, city
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+          [
+            job.title,
+            job.description,
+            inferredCategory,
+            job.company || "WayUp",
+            job.location || "Unknown",
+            job.applyUrl,
+            new Date(),
+            true,
+            "wayup_detailed",
+            "United States",
+            null,
+            null,
+          ]
+        );
+        insertedCount++;
+      } catch (error) {
+        console.error(`Failed to insert job ${job.title}:`, error);
+      }
+    }
+
+    res.json({ message: `Imported ${insertedCount} new jobs from WayUp.` });
+  })
+);
 // ----- NEW: Import jobs from plain email text (simple example) -----
 
 interface JobFromEmail {

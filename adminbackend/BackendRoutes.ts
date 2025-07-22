@@ -571,31 +571,26 @@ router.post(
     let insertedCount = 0;
 
     try {
-      // Parse the HTML email content using cheerio
       const cheerio = (await import("cheerio")).default;
       const $ = cheerio.load(emailHtml);
 
-      // Example: LinkedIn newsletter job posts might be in <a> tags with job links or divs with job titles
-      // You will need to adjust selectors based on actual email structure
+      const links = $("a").toArray();
 
-      $("a").each(async (_, elem) => {
+      for (const elem of links) {
         const link = $(elem).attr("href") || "";
         const title = $(elem).text().trim();
 
-        if (!title || !link) return;
+        if (!title || !link) continue;
 
-        // Avoid duplicates
         const existing = await query(
           "SELECT id FROM jobs WHERE title = $1 OR apply_url = $2",
           [title, link]
         );
-        if (existing.rows.length > 0) return;
+        if (existing.rows.length > 0) continue;
 
-        // Infer category from title
         const inferredCategoryRaw = inferCategoryFromTitle(title);
         const inferredCategory = mapCategoryToValid(inferredCategoryRaw, validCategories);
 
-        // Default fields for newsletter jobs
         await query(
           `INSERT INTO jobs (
             title, description, category, company, location,
@@ -617,7 +612,7 @@ router.post(
           ]
         );
         insertedCount++;
-      });
+      }
 
       res.json({ message: `Imported ${insertedCount} new jobs from LinkedIn newsletter.` });
     } catch (error) {

@@ -7,12 +7,21 @@ import jwt from "jsonwebtoken";
 import { query } from "./db";
 import multer from "multer";
 import path from "path";
-
 import adminRoutes from "./adminbackend/BackendRoutes"; //--adminbackendroute
-
 import { OAuth2Client } from "google-auth-library";
-
 import { Pool } from "pg";
+import rateLimit from "express-rate-limit";
+
+// Define the rate limiter middleware
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // Limit each IP to 100 requests per windowMs
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: "Too many requests from this IP, please try again later.",
+});
+//-----------------------
+
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL, // or your config
@@ -132,6 +141,7 @@ function authenticateToken(req: Request, res: Response, next: NextFunction): voi
 
 // Import sendEmail utility here
 import { sendEmail } from "./utils/sendEmail";
+app.use(limiter);
 
 // ===================
 // Begin your full original route handlers here exactly as you sent them:

@@ -66,8 +66,10 @@ const app = express();
 
 // Strict CORS config: replace '*' with your frontend URL in production
 const allowedOrigins = [
-  "http://localhost:3000",
-  "https://your-ypropel-frontend-domain.com", // <-- Replace with your actual frontend URL
+ "http://localhost:3000",
+  "https://ypropel-frontend.onrender.com",
+  "https://ypropel.com",
+  "https://www.ypropel.com",
 ];
 
 app.use(

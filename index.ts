@@ -15,11 +15,12 @@ import rateLimit from "express-rate-limit";
 // Define the rate limiter middleware
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Limit each IP to 100 requests per windowMs
+  max: 2000, // allow 2000 requests per IP per 15 minutes
   standardHeaders: true,
   legacyHeaders: false,
   message: "Too many requests from this IP, please try again later.",
 });
+
 //-----------------------
 
 

@@ -166,7 +166,6 @@ function optionalAuthenticateToken(req: Request, res: Response, next: NextFuncti
 app.use(optionalAuthenticateToken);  // <-- here, early middleware
 
 
-// --------Middleware to log visitor info for admin reports routes
 app.use(async (req: Request, res: Response, next: NextFunction) => {
   try {
     if (req.method !== "GET") {
@@ -177,21 +176,36 @@ app.use(async (req: Request, res: Response, next: NextFunction) => {
     const visitDate = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
     const pageUrl = req.originalUrl || req.url;
 
-    // Optional: skip logging for admin users
+    // Skip logging for admin users
     if (req.user?.isAdmin) {
       return next();
     }
 
-    // Check if visit already logged for this user, page, and date
-    const existsResult = await query(
-      `SELECT 1 FROM visitors WHERE user_id = $1 AND visit_date = $2 AND page_url = $3 LIMIT 1`,
-      [userId, visitDate, pageUrl]
-    );
+    // Get visitor IP (handle proxy headers and fallback)
+    const ipAddress =
+      (req.headers['x-forwarded-for'] as string)?.split(',')[0].trim() ||
+      req.socket.remoteAddress ||
+      null;
 
-    if (existsResult.rowCount === 0) {
+    // Check if visit already logged for this user or IP, page, and date
+    // For logged-in users: check by user_id
+    // For guests: check by ip_address
+    const existsResult = userId
+      ? await query(
+          `SELECT 1 FROM visitors WHERE user_id = $1 AND visit_date = $2 AND page_url = $3 LIMIT 1`,
+          [userId, visitDate, pageUrl]
+        )
+      : ipAddress
+      ? await query(
+          `SELECT 1 FROM visitors WHERE ip_address = $1 AND visit_date = $2 AND page_url = $3 LIMIT 1`,
+          [ipAddress, visitDate, pageUrl]
+        )
+      : null;
+
+    if (!existsResult || existsResult.rowCount === 0) {
       await query(
-        `INSERT INTO visitors (user_id, visit_date, page_url) VALUES ($1, $2, $3)`,
-        [userId, visitDate, pageUrl]
+        `INSERT INTO visitors (user_id, visit_date, page_url, ip_address) VALUES ($1, $2, $3, $4)`,
+        [userId, visitDate, pageUrl, ipAddress]
       );
     }
 
@@ -201,6 +215,7 @@ app.use(async (req: Request, res: Response, next: NextFunction) => {
     next();
   }
 });
+
 
 
 //----------------------------

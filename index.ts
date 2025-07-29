@@ -183,17 +183,12 @@ app.use(async (req: Request, res: Response, next: NextFunction) => {
     const visitDate = new Date().toISOString().slice(0, 10); // YYYY-MM-DD format
 
     // Insert into visitors table
-    await query(
-      `INSERT INTO visitors (user_id, visit_date, page_url, ip_address, user_agent)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [
-        userId,
-        visitDate,
-        req.path, // log requested path for info
-        req.ip || req.connection.remoteAddress || null,
-        req.headers["user-agent"] || null,
-      ]
-    );
+   await query(
+  `INSERT INTO visitors (user_id, visit_date, page_url)
+   VALUES ($1, $2, $3)`,
+  [userId || null, new Date(), req.originalUrl || req.url]
+);
+
 
     next();
   } catch (error) {

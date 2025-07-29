@@ -3631,7 +3631,7 @@ app.get(
   })
 );
 
-// Add this route in backend if not present
+// -------------------------
 app.get(
   "/reports/members",
   authenticateToken,
@@ -3647,6 +3647,48 @@ app.get(
     });
   })
 );
+app.get(
+  "/reports/visitors",
+  authenticateToken,
+  asyncHandler(async (req: Request, res: Response) => {
+    const date = req.query.date as string;
+    if (!date) return res.status(400).json({ error: "Missing date parameter" });
+
+    // Total visits from members (user_id not null) on that date
+    const visitorsFromMembersResult = await query(
+      `SELECT COUNT(*) AS count 
+       FROM visits 
+       WHERE visit_date = $1 
+         AND user_id IS NOT NULL`,
+      [date]
+    );
+
+    // Total visits from guests (user_id null) on that date
+    const visitorsFromGuestsResult = await query(
+      `SELECT COUNT(*) AS count 
+       FROM visits 
+       WHERE visit_date = $1 
+         AND user_id IS NULL`,
+      [date]
+    );
+
+    // New: Count unique member visits (distinct user_id)
+    const uniqueMemberVisitsResult = await query(
+      `SELECT COUNT(DISTINCT user_id) AS unique_count 
+       FROM visits 
+       WHERE visit_date = $1 
+         AND user_id IS NOT NULL`,
+      [date]
+    );
+
+    res.json({
+      visitorsFromMembers: Number(visitorsFromMembersResult.rows[0].count) || 0,
+      visitorsFromGuests: Number(visitorsFromGuestsResult.rows[0].count) || 0,
+      uniqueMemberVisits: Number(uniqueMemberVisitsResult.rows[0].unique_count) || 0,
+    });
+  })
+);
+
 
 //------------------------END of Admin BackEnd routes----------------------------
 //---DB check block

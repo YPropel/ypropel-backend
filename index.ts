@@ -3631,6 +3631,22 @@ app.get(
   })
 );
 
+// Add this route in backend if not present
+app.get(
+  "/reports/members",
+  authenticateToken,
+  asyncHandler(async (req, res) => {
+    const countResult = await query("SELECT COUNT(*) FROM users");
+    const totalMembers = parseInt(countResult.rows[0].count, 10);
+
+    const membersResult = await query("SELECT id, name, email FROM users ORDER BY name ASC");
+
+    res.json({
+      totalMembers,
+      members: membersResult.rows,
+    });
+  })
+);
 
 //------------------------END of Admin BackEnd routes----------------------------
 //---DB check block

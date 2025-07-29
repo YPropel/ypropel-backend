@@ -3597,17 +3597,19 @@ app.get('/articles/:id/likes', authenticateToken, asyncHandler(async (req: Reque
 
 
 //---------------------------
-//------------Admin Rpeorts routes------------
+//------------Admin Reports routes------------
+
 app.get(
   "/reports/members/new",
   authenticateToken,
   asyncHandler(async (req, res) => {
     const date = req.query.date as string;
     if (!date) return res.status(400).json({ error: "Date is required" });
-    
-    // Count new users who signed up on that date (assuming you have a created_at column)
+
+    // Count new users who signed up on that date (using created_at timestamp with date range)
     const result = await query(
-      "SELECT COUNT(*) FROM users WHERE created_at::date = $1",
+      `SELECT COUNT(*) FROM users 
+       WHERE created_at >= $1::date AND created_at < ($1::date + INTERVAL '1 day')`,
       [date]
     );
     const newMembersCount = parseInt(result.rows[0].count, 10);
@@ -3621,17 +3623,44 @@ app.get(
   asyncHandler(async (req, res) => {
     const date = req.query.date as string;
     if (!date) return res.status(400).json({ error: "Date is required" });
-    
-    // Your query logic here to get visitors from members and guests on date
-    // e.g.:
-    const visitorsFromMembers = 25; // replace with real query
-    const visitorsFromGuests = 50;  // replace with real query
 
-    res.json({ visitorsFromMembers, visitorsFromGuests });
+    // Total visits from members (user_id not null) on that date (full day range)
+    const visitorsFromMembersResult = await query(
+      `SELECT COUNT(*) AS count 
+       FROM visits 
+       WHERE visit_date >= $1::date AND visit_date < ($1::date + INTERVAL '1 day')
+         AND user_id IS NOT NULL`,
+      [date]
+    );
+
+    // Total visits from guests (user_id null) on that date (full day range)
+    const visitorsFromGuestsResult = await query(
+      `SELECT COUNT(*) AS count 
+       FROM visits 
+       WHERE visit_date >= $1::date AND visit_date < ($1::date + INTERVAL '1 day')
+         AND user_id IS NULL`,
+      [date]
+    );
+
+    // Unique member visits count (distinct user_id) on that date
+    const uniqueMemberVisitsResult = await query(
+      `SELECT COUNT(DISTINCT user_id) AS unique_count 
+       FROM visits 
+       WHERE visit_date >= $1::date AND visit_date < ($1::date + INTERVAL '1 day')
+         AND user_id IS NOT NULL`,
+      [date]
+    );
+
+    res.json({
+      visitorsFromMembers: Number(visitorsFromMembersResult.rows[0].count) || 0,
+      visitorsFromGuests: Number(visitorsFromGuestsResult.rows[0].count) || 0,
+      uniqueMemberVisits: Number(uniqueMemberVisitsResult.rows[0].unique_count) || 0,
+    });
   })
 );
 
 // -------------------------
+
 app.get(
   "/reports/members",
   authenticateToken,
@@ -3644,47 +3673,6 @@ app.get(
     res.json({
       totalMembers,
       members: membersResult.rows,
-    });
-  })
-);
-app.get(
-  "/reports/visitors",
-  authenticateToken,
-  asyncHandler(async (req: Request, res: Response) => {
-    const date = req.query.date as string;
-    if (!date) return res.status(400).json({ error: "Missing date parameter" });
-
-    // Total visits from members (user_id not null) on that date
-    const visitorsFromMembersResult = await query(
-      `SELECT COUNT(*) AS count 
-       FROM visits 
-       WHERE visit_date = $1 
-         AND user_id IS NOT NULL`,
-      [date]
-    );
-
-    // Total visits from guests (user_id null) on that date
-    const visitorsFromGuestsResult = await query(
-      `SELECT COUNT(*) AS count 
-       FROM visits 
-       WHERE visit_date = $1 
-         AND user_id IS NULL`,
-      [date]
-    );
-
-    // New: Count unique member visits (distinct user_id)
-    const uniqueMemberVisitsResult = await query(
-      `SELECT COUNT(DISTINCT user_id) AS unique_count 
-       FROM visits 
-       WHERE visit_date = $1 
-         AND user_id IS NOT NULL`,
-      [date]
-    );
-
-    res.json({
-      visitorsFromMembers: Number(visitorsFromMembersResult.rows[0].count) || 0,
-      visitorsFromGuests: Number(visitorsFromGuestsResult.rows[0].count) || 0,
-      uniqueMemberVisits: Number(uniqueMemberVisitsResult.rows[0].unique_count) || 0,
     });
   })
 );

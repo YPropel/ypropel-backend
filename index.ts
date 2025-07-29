@@ -115,6 +115,8 @@ class AuthError extends Error {
   }
 }
 
+
+
 function authenticateToken(req: Request, res: Response, next: NextFunction): void {
   const authHeader = req.headers["authorization"];
   const token = authHeader?.split(" ")[1];
@@ -143,6 +145,63 @@ function authenticateToken(req: Request, res: Response, next: NextFunction): voi
 // Import sendEmail utility here
 import { sendEmail } from "./utils/sendEmail";
 app.use(limiter);
+function optionalAuthenticateToken(req: Request, res: Response, next: NextFunction) {
+  const authHeader = req.headers["authorization"];
+  const token = authHeader?.split(" ")[1];
+  if (!token) return next();
+
+  jwt.verify(token, JWT_SECRET, (err, decoded) => {
+    if (!err && decoded) {
+      const payload = decoded as { userId: number; email?: string; is_admin?: boolean };
+      req.user = {
+        userId: payload.userId,
+        email: payload.email,
+        isAdmin: payload.is_admin || false,
+      };
+    }
+    next();
+  });
+}
+
+app.use(optionalAuthenticateToken);  // <-- here, early middleware
+
+
+// --------Middleware to log visitor info for admin reports routes
+app.use(async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    // We only log GET requests (you can adjust as needed)
+    if (req.method !== "GET") {
+      return next();
+    }
+
+    // Get user id if logged in (from your authenticateToken middleware user object)
+    // For visitor logging, user might be undefined for guests
+    const userId = req.user?.userId || null;
+
+    // Use today's date (visit_date), ignoring time (UTC)
+    // Or use current timestamp and store separately if preferred
+    const visitDate = new Date().toISOString().slice(0, 10); // YYYY-MM-DD format
+
+    // Insert into visitors table
+    await query(
+      `INSERT INTO visitors (user_id, visit_date, path, ip_address, user_agent)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [
+        userId,
+        visitDate,
+        req.path, // log requested path for info
+        req.ip || req.connection.remoteAddress || null,
+        req.headers["user-agent"] || null,
+      ]
+    );
+
+    next();
+  } catch (error) {
+    console.error("Error logging visitor:", error);
+    next(); // Don't block request if logging fails
+  }
+});
+//----------------------------
 
 // ===================
 // Begin your full original route handlers here exactly as you sent them:

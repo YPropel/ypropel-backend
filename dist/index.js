@@ -10,9 +10,11 @@ const bcrypt_1 = __importDefault(require("bcrypt"));
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const db_1 = require("./db");
 const multer_1 = __importDefault(require("multer"));
-require("./cronoldjobfairs");
+const BackendRoutes_1 = __importDefault(require("./adminbackend/BackendRoutes")); //--adminbackendroute
 const google_auth_library_1 = require("google-auth-library");
 const pg_1 = require("pg");
+const joi_1 = __importDefault(require("joi"));
+const express_rate_limit_1 = __importDefault(require("express-rate-limit"));
 const pool = new pg_1.Pool({
     connectionString: process.env.DATABASE_URL, // or your config
     // other config options if needed
@@ -20,23 +22,24 @@ const pool = new pg_1.Pool({
 const googleClient = new google_auth_library_1.OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 const multerMemoryStorage = multer_1.default.memoryStorage();
 const uploadMemory = (0, multer_1.default)({ storage: multerMemoryStorage });
+//----------------
 const app = (0, express_1.default)();
-app.use((0, cors_1.default)());
+app.use((0, cors_1.default)({
+    origin: ["https://www.ypropel.com"], // Replace with your frontend URL
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    credentials: true,
+}));
+//--------------
+app.use(express_1.default.json());
+app.use("/admin", BackendRoutes_1.default); //--adminbackendroute
 const cloudinary_1 = require("cloudinary");
 const multer_storage_cloudinary_1 = require("multer-storage-cloudinary");
-// 🔐 Replace with your actual Cloudinary credentials
 cloudinary_1.v2.config({
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
     api_key: process.env.CLOUDINARY_API_KEY,
     api_secret: process.env.CLOUDINARY_API_SECRET,
 });
-/*const storage = new CloudinaryStorage({
-  cloudinary,
-  params: async (req, file) => ({
-    folder: "ypropel-news", // ✅ Correct way to set folder
-   allowed_formats: ["jpg", "jpeg", "png", "mp4", "mov", "avi"], // added video formats
-  }),
-});*/
+//--------------
 const storage = new multer_storage_cloudinary_1.CloudinaryStorage({
     cloudinary: cloudinary_1.v2,
     params: async (req, file) => {
@@ -50,14 +53,20 @@ const storage = new multer_storage_cloudinary_1.CloudinaryStorage({
         };
     },
 });
+//-----------------
 const upload = (0, multer_1.default)({ storage });
 const port = 4000;
 const JWT_SECRET = process.env.JWT_SECRET || "your_jwt_secret_key";
 console.log("JWT_SECRET used:", JWT_SECRET === "your_jwt_secret_key"
     ? "DEFAULT SECRET (please set env JWT_SECRET!)"
     : "SECRET SET FROM ENV");
-app.use((0, cors_1.default)());
-app.use(express_1.default.json());
+//-------------------
+const authLimiter = (0, express_rate_limit_1.default)({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 10, // limit each IP to 10 requests per windowMs
+    message: "Too many requests from this IP, please try again later.",
+});
+//--------------------
 app.use("/uploads", express_1.default.static("uploads"));
 function asyncHandler(fn) {
     return function (req, res, next) {
@@ -67,12 +76,17 @@ function asyncHandler(fn) {
 // Middleware for token authentication (use this for protected routes)
 const sendEmail_1 = require("./utils/sendEmail"); // ⬅️ make sure this is at the top of your file if not already
 // ----------- Password Reset Request Route -----------
-app.post("/auth/google-login", asyncHandler(async (req, res) => {
+const googleLoginSchema = joi_1.default.object({
+    tokenId: joi_1.default.string().required(),
+});
+app.post("/auth/google-login", authLimiter, asyncHandler(async (req, res) => {
     try {
-        const { tokenId } = req.body;
-        if (!tokenId) {
-            return res.status(400).json({ error: "tokenId is required" });
+        const { error } = googleLoginSchema.validate(req.body);
+        if (error) {
+            return res.status(400).json({ error: error.details[0].message });
         }
+        const { tokenId } = req.body;
+        console.log("GOOGLE_CLIENT_ID used:", process.env.GOOGLE_CLIENT_ID);
         const ticket = await googleClient.verifyIdToken({
             idToken: tokenId,
             audience: process.env.GOOGLE_CLIENT_ID,
@@ -109,11 +123,16 @@ app.post("/auth/google-login", asyncHandler(async (req, res) => {
         res.status(500).json({ error: "Internal Server Error" });
     }
 }));
-app.post("/auth/forgot-password", asyncHandler(async (req, res) => {
-    const { email } = req.body;
-    if (!email) {
-        return res.status(400).json({ error: "Email is required" });
+//----------------------forget Password route------------------
+const forgotPasswordSchema = joi_1.default.object({
+    email: joi_1.default.string().email().required(),
+});
+app.post("/auth/forgot-password", authLimiter, asyncHandler(async (req, res) => {
+    const { error } = forgotPasswordSchema.validate(req.body);
+    if (error) {
+        return res.status(400).json({ error: error.details[0].message });
     }
+    const { email } = req.body;
     const result = await (0, db_1.query)("SELECT * FROM users WHERE email = $1", [email]);
     if (result.rows.length === 0) {
         return res.status(404).json({ error: "No account found with this email" });
@@ -124,17 +143,26 @@ app.post("/auth/forgot-password", asyncHandler(async (req, res) => {
         email: user.email, // Optional, but helpful
         is_admin: user.is_admin, // ✅ Required for admin access on frontend
     }, JWT_SECRET, { expiresIn: "1h" });
-    const resetLink = `http://localhost:3000/reset-password?token=${token}`;
-    await (0, sendEmail_1.sendEmail)({
-        to: email,
-        subject: "Reset your YPropel password",
-        text: `You requested a password reset. Click here to reset: ${resetLink}`,
-        html: `<p>You requested a password reset.</p><p><a href="${resetLink}">Click here to reset your password</a></p>`,
-    });
+    const resetLink = `https://www.ypropel.com/reset-password?token=${token}`;
+    await (0, sendEmail_1.sendEmail)(email, "Reset your YPropel password", `<p>You requested a password reset.</p><p><a href="${resetLink}">Click here to reset your password</a></p>`);
     res.json({ message: "Password reset email sent" });
 }));
-app.post("/auth/reset-password", asyncHandler(async (req, res) => {
+//--------------------------------------------------------
+//--------------------Reset password route---------------
+const resetPasswordSchema = joi_1.default.object({
+    token: joi_1.default.string().required(),
+    newPassword: joi_1.default.string().min(8).required(), // Enforce min length (adjust as needed)
+});
+app.post("/auth/reset-password", authLimiter, asyncHandler(async (req, res) => {
+    const { error } = resetPasswordSchema.validate(req.body);
+    if (error) {
+        return res.status(400).json({ error: error.details[0].message });
+    }
     const { token, newPassword } = req.body;
+    // const { error } = resetPasswordSchema.validate(req.body);
+    // if (error) {
+    //  return res.status(400).json({ error: error.details[0].message }); 
+    //}
     if (!token || !newPassword) {
         return res.status(400).json({ error: "Token and new password are required" });
     }
@@ -152,21 +180,22 @@ app.post("/auth/reset-password", asyncHandler(async (req, res) => {
         res.status(400).json({ error: "Invalid or expired reset token." });
     }
 }));
+class AuthError extends Error {
+    constructor(message, statusCode = 401) {
+        super(message);
+        this.statusCode = statusCode;
+    }
+}
 function authenticateToken(req, res, next) {
     const authHeader = req.headers["authorization"];
-    //console.log("🔥 Auth header:", authHeader);
     const token = authHeader?.split(" ")[1];
     if (!token) {
-        console.log("⚠️ No token found in Authorization header");
-        return;
+        return next(new AuthError("No token provided", 401));
     }
     jsonwebtoken_1.default.verify(token, JWT_SECRET, (err, decoded) => {
         if (err) {
-            console.log("❌ JWT verification failed:", err.message);
-            return;
+            return next(new AuthError("Invalid or expired token", 403));
         }
-        //console.log("✅ JWT verified. Decoded payload:", decoded);
-        // Cast decoded payload
         const payload = decoded;
         req.user = {
             userId: payload.userId,
@@ -176,6 +205,7 @@ function authenticateToken(req, res, next) {
         next();
     });
 }
+//---------------------------------------
 const defaultProfilePhotos = [
     "https://res.cloudinary.com/denggbgma/image/upload/v<version>/ypropel-users/default-profile1.png",
 ];
@@ -267,8 +297,9 @@ app.get("/users/me", authenticateToken, asyncHandler(async (req, res) => {
     if (!userId)
         return res.status(401).json({ error: "Unauthorized" });
     const result = await (0, db_1.query)(`SELECT id, name, email, title, university, major, experience_level, skills, company,
-       courses_completed, country, birthdate, volunteering_work, projects_completed, photo_url
-       FROM users WHERE id = $1`, [userId]);
+   courses_completed, country, birthdate, volunteering_work, projects_completed, photo_url,
+   is_premium
+   FROM users WHERE id = $1`, [userId]);
     if (result.rows.length === 0) {
         return res.status(404).json({ error: "User not found" });
     }
@@ -338,7 +369,7 @@ app.get("/posts", authenticateToken, asyncHandler(async (req, res) => {
     }));
     res.json(postsWithExtras);
 }));
-// -----POST create a new post
+// -----POST create a new post on home page----------
 // POST create a new post
 app.post("/posts", authenticateToken, upload.fields([
     { name: "image", maxCount: 1 },
@@ -481,7 +512,8 @@ app.get("/posts/:postId/comments", authenticateToken, asyncHandler(async (req, r
        ORDER BY c.created_at ASC`, [postId]);
     res.json(result.rows);
 }));
-//---------------NEws and updates-------
+//-------------Admin News and updates-------
+// GET news - no changes needed if table has url column
 app.get("/news", async (req, res) => {
     try {
         const result = await (0, db_1.query)("SELECT * FROM news ORDER BY created_at DESC");
@@ -491,16 +523,16 @@ app.get("/news", async (req, res) => {
         res.status(500).json({ error: "Failed to fetch news" });
     }
 });
-//-------------------------
+// POST news - add url field support
 app.post("/news", (req, res) => {
     (async () => {
-        const { title, content, image_url } = req.body;
+        const { title, content, image_url, url } = req.body;
         if (!title || !content) {
             res.status(400).json({ error: "Missing title or content" });
             return;
         }
         try {
-            await (0, db_1.query)("INSERT INTO news (title, content, image_url) VALUES ($1, $2, $3)", [title, content, image_url || null]);
+            await (0, db_1.query)("INSERT INTO news (title, content, image_url, url) VALUES ($1, $2, $3, $4)", [title, content, image_url || null, url || null]);
             res.status(201).json({ message: "News added successfully" });
         }
         catch (err) {
@@ -819,17 +851,20 @@ app.get("/messages/unread-count-by-sender", authenticateToken, asyncHandler(asyn
 // --------------Discussion Topics route---------------
 //--------------Post Discussion Topic---------------
 app.post("/discussion_topics", authenticateToken, asyncHandler(async (req, res) => {
-    const { topic } = req.body;
+    const { title, topic } = req.body;
+    //const { topic } = req.body;
     const userId = req.user?.userId;
     if (!userId)
-        return res.status(401).json({ error: "Unauthorized" });
+        if (!title || title.trim() === "") {
+            return res.status(401).json({ error: "Unauthorized" });
+        }
     if (!topic || topic.trim() === "") {
         return res.status(400).json({ error: "Topic content is required" });
     }
-    // 1. Insert topic
-    const insertResult = await (0, db_1.query)(`INSERT INTO discussion_topics (user_id, topic, created_at)
-       VALUES ($1, $2, NOW())
-       RETURNING id, user_id, topic, created_at`, [userId, topic]);
+    // 1. Insert topic & title
+    const insertResult = await (0, db_1.query)(`INSERT INTO discussion_topics (user_id, title, topic, created_at)
+       VALUES ($1, $2, $3, NOW())
+       RETURNING id, user_id, title, topic, created_at`, [userId, title.trim(), topic.trim()]);
     const newTopic = insertResult.rows[0];
     // 2. Get author name
     const authorResult = await (0, db_1.query)("SELECT name FROM users WHERE id = $1", [userId]);
@@ -837,9 +872,11 @@ app.post("/discussion_topics", authenticateToken, asyncHandler(async (req, res) 
     // 3. Return enriched topic object
     res.status(201).json({
         id: newTopic.id,
+        title: newTopic.title,
         topic: newTopic.topic,
         createdAt: newTopic.created_at,
         author: authorName,
+        authorId: userId,
         liked: false,
         followed: false,
         upvoted: false,
@@ -889,6 +926,125 @@ app.post("/discussion_topics/:topicId/follow", authenticateToken, asyncHandler(a
         return res.json({ followed: true });
     }
 }));
+//-------Discussion topics comments  --------
+app.post("/discussion_topics/:topicId/comments", authenticateToken, asyncHandler(async (req, res) => {
+    const topicId = parseInt(req.params.topicId, 10);
+    const userId = req.user?.userId;
+    const { content } = req.body;
+    if (!userId)
+        return res.status(401).json({ error: "Unauthorized" });
+    if (isNaN(topicId))
+        return res.status(400).json({ error: "Invalid topic ID" });
+    if (!content || content.trim() === "") {
+        return res.status(400).json({ error: "Content is required" });
+    }
+    // Insert the comment
+    const insertResult = await (0, db_1.query)(`INSERT INTO discussion_comments (topic_id, user_id, content, created_at)
+       VALUES ($1, $2, $3, NOW())
+       RETURNING id, topic_id, user_id, content, created_at`, [topicId, userId, content]);
+    const newComment = insertResult.rows[0];
+    // Get the user name to return with comment
+    const userResult = await (0, db_1.query)(`SELECT name FROM users WHERE id = $1`, [userId]);
+    const userName = userResult.rows[0]?.name || "Unknown";
+    // Return the comment with userName
+    res.status(201).json({
+        id: newComment.id,
+        userId: newComment.user_id,
+        userName,
+        content: newComment.content,
+        createdAt: newComment.created_at,
+    });
+}));
+//----Get comments for discussion topic---
+app.get("/discussion_topics", authenticateToken, asyncHandler(async (req, res) => {
+    const userId = req.user?.userId;
+    if (!userId)
+        return res.status(401).json({ error: "Unauthorized" });
+    // Get all discussion topics with author names
+    const topicsResult = await (0, db_1.query)(`SELECT dt.*, u.name AS author_name
+       FROM discussion_topics dt
+       JOIN users u ON dt.user_id = u.id
+       ORDER BY dt.created_at DESC`);
+    // Get all upvotes for the current user
+    const upvotesResult = await (0, db_1.query)("SELECT topic_id FROM discussion_upvotes WHERE user_id = $1", [userId]);
+    // Count total upvotes per topic
+    const upvoteCountsResult = await (0, db_1.query)(`
+  SELECT topic_id, COUNT(*) AS count
+  FROM discussion_upvotes
+  GROUP BY topic_id
+`);
+    const upvotedTopicIds = new Set(upvotesResult.rows.map((r) => r.topic_id));
+    const upvoteCountsMap = {};
+    for (const row of upvoteCountsResult.rows) {
+        upvoteCountsMap[row.topic_id] = parseInt(row.count, 10);
+    }
+    const topicIds = topicsResult.rows.map((t) => t.id);
+    let commentsResult = { rows: [] };
+    if (topicIds.length > 0) {
+        commentsResult = await (0, db_1.query)(`SELECT c.*, u.name AS user_name
+         FROM discussion_comments c
+         JOIN users u ON c.user_id = u.id
+         WHERE c.topic_id = ANY($1::int[])
+         ORDER BY c.created_at ASC`, [topicIds]);
+    }
+    const commentsByTopicId = {};
+    for (const comment of commentsResult.rows) {
+        if (!commentsByTopicId[comment.topic_id]) {
+            commentsByTopicId[comment.topic_id] = [];
+        }
+        commentsByTopicId[comment.topic_id].push(comment);
+    }
+    // Fetch likes and follows by the current user
+    const likesResult = await (0, db_1.query)("SELECT topic_id FROM discussion_likes WHERE user_id = $1", [userId]);
+    const followsResult = await (0, db_1.query)("SELECT topic_id FROM discussion_follows WHERE user_id = $1", [userId]);
+    const likedTopicIds = new Set(likesResult.rows.map((r) => r.topic_id));
+    const followedTopicIds = new Set(followsResult.rows.map((r) => r.topic_id));
+    const likesCountResult = await (0, db_1.query)(`
+  SELECT topic_id, COUNT(*) AS count
+  FROM discussion_likes
+  GROUP BY topic_id
+`);
+    const likesCountMap = {};
+    for (const row of likesCountResult.rows) {
+        likesCountMap[row.topic_id] = parseInt(row.count, 10);
+    }
+    const enrichedTopics = topicsResult.rows.map((topic) => ({
+        id: topic.id,
+        title: topic.title,
+        topic: topic.topic,
+        authorId: topic.user_id,
+        createdAt: topic.created_at,
+        author: topic.author_name,
+        likes: likesCountMap[topic.id] || 0,
+        shares: topic.shares || 0,
+        liked: likedTopicIds.has(topic.id),
+        upvotes: upvoteCountsMap[topic.id] || 0,
+        upvoted: upvotedTopicIds.has(topic.id),
+        followed: followedTopicIds.has(topic.id),
+        comments: commentsByTopicId[topic.id] || [],
+    }));
+    res.json(enrichedTopics);
+}));
+//--------allow user to delete comment
+app.delete("/discussion_topics/comments/:commentId", authenticateToken, asyncHandler(async (req, res) => {
+    const commentId = parseInt(req.params.commentId, 10);
+    const userId = req.user?.userId;
+    if (!userId)
+        return res.status(401).json({ error: "Unauthorized" });
+    if (isNaN(commentId))
+        return res.status(400).json({ error: "Invalid comment ID" });
+    // Check ownership
+    const commentCheck = await (0, db_1.query)("SELECT user_id FROM discussion_comments WHERE id = $1", [commentId]);
+    if (commentCheck.rows.length === 0) {
+        return res.status(404).json({ error: "Comment not found" });
+    }
+    if (commentCheck.rows[0].user_id !== userId) {
+        return res.status(403).json({ error: "Forbidden: You can only delete your own comments" });
+    }
+    // Delete comment
+    await (0, db_1.query)("DELETE FROM discussion_comments WHERE id = $1", [commentId]);
+    res.json({ message: "Comment deleted successfully" });
+}));
 // ---Post discussion topics upvote--
 app.post("/discussion_topics/:topicId/upvote", authenticateToken, asyncHandler(async (req, res) => {
     const topicId = parseInt(req.params.topicId, 10);
@@ -906,70 +1062,6 @@ app.post("/discussion_topics/:topicId/upvote", authenticateToken, asyncHandler(a
         await (0, db_1.query)("INSERT INTO discussion_upvotes (user_id, topic_id) VALUES ($1, $2)", [userId, topicId]);
         return res.json({ upvoted: true });
     }
-}));
-//--Get All discussion topics---
-// ✅ GET discussion topics with author, comments, likes, follows
-app.get("/discussion_topics", authenticateToken, asyncHandler(async (req, res) => {
-    const userId = req.user?.userId;
-    if (!userId)
-        return res.status(401).json({ error: "Unauthorized" });
-    // ✅ 1. Get topics with author names
-    const topicsResult = await (0, db_1.query)(`SELECT dt.*, u.name AS author_name,
-     (SELECT COUNT(*) FROM discussion_upvotes du WHERE du.topic_id = dt.id) AS upvotes
-   FROM discussion_topics dt
-   JOIN users u ON dt.user_id = u.id
-   ORDER BY dt.created_at DESC`);
-    //--get upvotes--
-    const upvotesResult = await (0, db_1.query)("SELECT topic_id FROM discussion_upvotes WHERE user_id = $1", [userId]);
-    const upvotedTopicIds = new Set(upvotesResult.rows.map((r) => r.topic_id));
-    //----------------
-    const topicIds = topicsResult.rows.map((t) => t.id);
-    // ✅ 2. Get comment list
-    let commentsResult = { rows: [] };
-    if (topicIds.length > 0) {
-        commentsResult = await (0, db_1.query)(`SELECT c.*, u.name AS user_name
-         FROM discussion_comments c
-         JOIN users u ON c.user_id = u.id
-         WHERE c.topic_id = ANY($1::int[])
-         ORDER BY c.created_at ASC`, [topicIds]);
-    }
-    // ✅ 3. Organize comments by topic ID
-    const commentsByTopicId = {};
-    for (const comment of commentsResult.rows) {
-        if (!commentsByTopicId[comment.topic_id]) {
-            commentsByTopicId[comment.topic_id] = [];
-        }
-        commentsByTopicId[comment.topic_id].push(comment);
-    }
-    // ✅ 4. Get user's likes and follows
-    const likesResult = await (0, db_1.query)("SELECT topic_id FROM discussion_likes WHERE user_id = $1", [userId]);
-    const followsResult = await (0, db_1.query)("SELECT topic_id FROM discussion_follows WHERE user_id = $1", [userId]);
-    const likedTopicIds = new Set(likesResult.rows.map((r) => r.topic_id));
-    const followedTopicIds = new Set(followsResult.rows.map((r) => r.topic_id));
-    // ✅ 5. Get like counts
-    const likeCountsResult = await (0, db_1.query)(`SELECT topic_id, COUNT(*) as like_count
-       FROM discussion_likes
-       GROUP BY topic_id`);
-    const likeCounts = {};
-    for (const row of likeCountsResult.rows) {
-        likeCounts[row.topic_id] = parseInt(row.like_count, 10);
-    }
-    // ✅ 6. Merge everything into enriched topic objects
-    const enrichedTopics = topicsResult.rows.map((topic) => ({
-        id: topic.id,
-        topic: topic.topic,
-        createdAt: topic.created_at,
-        author: topic.author_name,
-        likes: likeCounts[topic.id] || 0,
-        shares: topic.shares || 0,
-        upvotes: topic.upvotes || 0, // ✅ add this line
-        liked: likedTopicIds.has(topic.id),
-        followed: followedTopicIds.has(topic.id),
-        upvoted: upvotedTopicIds.has(topic.id),
-        comments: commentsByTopicId[topic.id] || [],
-    }));
-    // ✅ 7. Return to frontend
-    res.json(enrichedTopics);
 }));
 //----delete discussion topic---
 app.delete("/discussion_topics/:topicId", authenticateToken, asyncHandler(async (req, res) => {
@@ -1051,16 +1143,22 @@ app.post("/study-circles", authenticateToken, asyncHandler(async (req, res) => {
 }));
 //-------------Get all study circles----------
 app.get("/study-circles", authenticateToken, asyncHandler(async (_req, res) => {
-    const circles = await (0, db_1.query)(`SELECT sc.id, sc.name, sc.is_public, sc.created_at, sc.user_id AS created_by, u.name AS creator
+    const ownerEmail = _req.query.ownerEmail || null;
+    const circleName = _req.query.circleName || null;
+    const results = await (0, db_1.query)(`SELECT sc.id, sc.name, sc.is_public, sc.created_at, sc.user_id AS created_by, u.name AS creator, u.email AS owner_email
        FROM study_circles sc
        JOIN users u ON sc.user_id = u.id
-       ORDER BY sc.created_at DESC`);
+       WHERE ($1::text IS NULL OR u.email ILIKE '%' || $1 || '%')
+         AND ($2::text IS NULL OR sc.name ILIKE '%' || $2 || '%')
+       ORDER BY sc.created_at DESC`, [ownerEmail, circleName]);
+    //  Get members for circles (same as before)
     const memberResults = await (0, db_1.query)(`SELECT scm.circle_id, u.email
        FROM study_circle_members scm
        JOIN users u ON scm.user_id = u.id`);
     // ✅ FIXED: Include `created_by` in the type definition
     const circleMap = new Map();
-    circles.rows.forEach(circle => {
+    // Build map from filtered circles only
+    results.rows.forEach(circle => {
         circleMap.set(circle.id, { ...circle, members: [] });
     });
     memberResults.rows.forEach(member => {
@@ -1137,106 +1235,6 @@ app.get("/users/search", authenticateToken, async (req, res) => {
     }
 });
 //---------------------------------------
-//-------Discussion comments and --------
-app.post("/discussion_topics/:topicId/comments", authenticateToken, asyncHandler(async (req, res) => {
-    const topicId = parseInt(req.params.topicId, 10);
-    const userId = req.user?.userId;
-    const { content } = req.body;
-    if (!userId)
-        return res.status(401).json({ error: "Unauthorized" });
-    if (isNaN(topicId))
-        return res.status(400).json({ error: "Invalid topic ID" });
-    if (!content || content.trim() === "") {
-        return res.status(400).json({ error: "Content is required" });
-    }
-    const result = await (0, db_1.query)(`INSERT INTO discussion_comments (topic_id, user_id, content, created_at)
-       VALUES ($1, $2, $3, NOW())
-       RETURNING id, topic_id, user_id, content, created_at`, [topicId, userId, content]);
-    res.status(201).json(result.rows[0]);
-}));
-//----Get comments for discussion topic---
-app.get("/discussion_topics", authenticateToken, asyncHandler(async (req, res) => {
-    const userId = req.user?.userId;
-    if (!userId)
-        return res.status(401).json({ error: "Unauthorized" });
-    // Get all discussion topics with author names
-    const topicsResult = await (0, db_1.query)(`SELECT dt.*, u.name AS author_name
-       FROM discussion_topics dt
-       JOIN users u ON dt.user_id = u.id
-       ORDER BY dt.created_at DESC`);
-    // Get all upvotes for the current user
-    const upvotesResult = await (0, db_1.query)("SELECT topic_id FROM discussion_upvotes WHERE user_id = $1", [userId]);
-    // Count total upvotes per topic
-    const upvoteCountsResult = await (0, db_1.query)(`
-  SELECT topic_id, COUNT(*) AS count
-  FROM discussion_upvotes
-  GROUP BY topic_id
-`);
-    const upvotedTopicIds = new Set(upvotesResult.rows.map((r) => r.topic_id));
-    const upvoteCountsMap = {};
-    for (const row of upvoteCountsResult.rows) {
-        upvoteCountsMap[row.topic_id] = parseInt(row.count, 10);
-    }
-    const topicIds = topicsResult.rows.map((t) => t.id);
-    let commentsResult = { rows: [] };
-    if (topicIds.length > 0) {
-        commentsResult = await (0, db_1.query)(`SELECT c.*, u.name AS user_name
-         FROM discussion_comments c
-         JOIN users u ON c.user_id = u.id
-         WHERE c.topic_id = ANY($1::int[])
-         ORDER BY c.created_at ASC`, [topicIds]);
-    }
-    const commentsByTopicId = {};
-    for (const comment of commentsResult.rows) {
-        if (!commentsByTopicId[comment.topic_id]) {
-            commentsByTopicId[comment.topic_id] = [];
-        }
-        commentsByTopicId[comment.topic_id].push(comment);
-    }
-    // Fetch likes and follows by the current user
-    const likesResult = await (0, db_1.query)("SELECT topic_id FROM discussion_likes WHERE user_id = $1", [userId]);
-    const followsResult = await (0, db_1.query)("SELECT topic_id FROM discussion_follows WHERE user_id = $1", [userId]);
-    const likedTopicIds = new Set(likesResult.rows.map((r) => r.topic_id));
-    const followedTopicIds = new Set(followsResult.rows.map((r) => r.topic_id));
-    const enrichedTopics = topicsResult.rows.map((topic) => ({
-        id: topic.id,
-        topic: topic.topic,
-        createdAt: topic.created_at,
-        author: topic.author_name,
-        likes: topic.likes || 0,
-        shares: topic.shares || 0,
-        liked: likedTopicIds.has(topic.id),
-        followed: followedTopicIds.has(topic.id),
-        comments: commentsByTopicId[topic.id] || [],
-    }));
-    res.json(enrichedTopics);
-}));
-// -------- Get user by ID (protected) --------
-//-- Before new edit profile
-/* app.get(
-  "/users/:id",
-  authenticateToken,
-  asyncHandler(async (req: Request, res: Response) => {
-    const userId = parseInt(req.params.id, 10);
-
-    if (isNaN(userId)) {
-      return res.status(400).json({ error: "Invalid user ID" });
-    }
-
-    const result = await query(
-      `SELECT id, name, email, title, university, major, experience_level, skills, company,
-        courses_completed, country, birthdate, volunteering_work, projects_completed, photo_url
-      FROM users WHERE id = $1`,
-      [userId]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: "User not found" });
-    }
-
-    res.json(result.rows[0]);
-  })
-);*/
 app.get("/users/:id", authenticateToken, asyncHandler(async (req, res) => {
     const userId = parseInt(req.params.id, 10);
     if (isNaN(userId)) {
@@ -1247,8 +1245,9 @@ app.get("/users/:id", authenticateToken, asyncHandler(async (req, res) => {
         return res.status(403).json({ error: "Forbidden" });
     }
     const result = await (0, db_1.query)(`SELECT id, name, email, title, university, major, experience_level, skills, company,
-        courses_completed, country, state, city, birthdate, volunteering_work, projects_completed, photo_url
-      FROM users WHERE id = $1`, [userId]);
+   courses_completed, country, birthdate, volunteering_work, projects_completed, photo_url,
+   is_premium
+   FROM users WHERE id = $1`, [userId]);
     if (result.rows.length === 0) {
         return res.status(404).json({ error: "User not found" });
     }
@@ -1312,7 +1311,13 @@ app.delete("/study-circles/:id", authenticateToken, async (req, res) => {
 // GET /api/videos - list all videos with counts
 app.get("/api/videos", asyncHandler(async (req, res) => {
     const videosRes = await (0, db_1.query)(`
-      SELECT v.*,
+      SELECT 
+        v.id,
+        v.user_id,
+        v.title,
+        v.description,
+        v.video_url,
+        v.category,
         COALESCE(l.likes_count, 0) AS likes,
         COALESCE(f.follows_count, 0) AS follows,
         COALESCE(v.share_count, 0) AS shares
@@ -1334,16 +1339,20 @@ app.get("/api/videos", asyncHandler(async (req, res) => {
 // POST /api/videos - add new video
 app.post("/api/videos", authenticateToken, asyncHandler(async (req, res) => {
     const { title, description, video_url, category } = req.body;
-    const userId = req.user.id;
+    const userId = req.user?.userId;
     if (!title || !video_url) {
         res.status(400).json({ error: "Title and video_url are required" });
+        return;
+    }
+    if (!userId) {
+        res.status(401).json({ error: "Unauthorized" });
         return;
     }
     const insertRes = await (0, db_1.query)(`INSERT INTO pitchpoint_videos (user_id, title, description, video_url, category, created_at, updated_at)
        VALUES ($1, $2, $3, $4, $5, NOW(), NOW()) RETURNING *`, [userId, title, description || null, video_url, category || null]);
     res.status(201).json(insertRes.rows[0]);
 }));
-// POST /api/videos/:id/like - toggle like
+//---------------
 // POST /api/videos/:id/like - toggle like
 app.post("/api/videos/:id/like", authenticateToken, asyncHandler(async (req, res) => {
     const videoId = parseInt(req.params.id);
@@ -1436,6 +1445,23 @@ app.post("/api/upload-video", authenticateToken, uploadMemory.single("file"), as
         console.error("Cloudinary upload error:", error);
         res.status(500).json({ error: "Failed to upload video" });
     }
+}));
+// DELETE /api/videos/:id - delete a video if owned by the authenticated user
+app.delete("/api/videos/:id", authenticateToken, asyncHandler(async (req, res) => {
+    const videoId = parseInt(req.params.id);
+    //const userId = (req as any).user.id;
+    const userId = req.user?.userId;
+    // Verify video exists and is owned by user
+    const videoRes = await (0, db_1.query)("SELECT user_id FROM pitchpoint_videos WHERE id = $1", [videoId]);
+    if (videoRes.rowCount === 0) {
+        return res.status(404).json({ error: "Video not found" });
+    }
+    if (videoRes.rows[0].user_id !== userId) {
+        return res.status(403).json({ error: "Not authorized to delete this video" });
+    }
+    // Delete video
+    await (0, db_1.query)("DELETE FROM pitchpoint_videos WHERE id = $1", [videoId]);
+    res.json({ success: true });
 }));
 //-------------------Universities ---------------------------------------
 //------- get universities list to public 
@@ -1779,32 +1805,6 @@ app.delete("/members/resumes/:id", authenticateToken, asyncHandler(async (req, r
 //---------------HERE Starts Admin backend functions----------
 //----------------------------------------------------------------------------------
 //-------AdminNews Delete Route--- Delete news and updates news
-/*---before new edit profile
-app.delete("/admin/news/:id", (req: Request, res: Response) => {
-  (async () => {
-    
-    const token = req.headers.authorization?.split(" ")[1];
-    if (!token) return res.status(401).json({ error: "Unauthorized" });
-
-    try {
-      const decoded: any = jwt.verify(token, JWT_SECRET);
-      if (!decoded.is_admin) {
-        return res.status(403).json({ error: "Access denied. Admins only." });
-      }
-
-      const newsId = parseInt(req.params.id);
-      if (isNaN(newsId)) {
-        return res.status(400).json({ error: "Invalid news ID" });
-      }
-
-      await query("DELETE FROM news WHERE id = $1", [newsId]);
-      res.json({ message: "News item deleted successfully" });
-    } catch (err) {
-      console.error("Error deleting news:", err);
-      res.status(500).json({ error: "Internal server error" });
-    }
-  })();
-}); */
 app.delete("/admin/news/:id", authenticateToken, asyncHandler(async (req, res) => {
     // Check admin rights via req.user.isAdmin, no need to decode JWT again
     console.log("req.user in DELETE:", req.user);
@@ -1841,34 +1841,6 @@ app.post("/admin/summer-programs", async (req, res) => {
         res.status(500).json({ error: "Server error" });
     }
 });
-//-------------Delete pre-college summer program by Admin------
-/*--- before new edit profile
-// ✅ Delete a summer program (admin only)
-app.delete("/admin/summer-programs/:id", (req: Request, res: Response) => {
-  (async () => {
-    const token = req.headers.authorization?.split(" ")[1];
-    if (!token) return res.status(401).json({ error: "Unauthorized" });
-
-    try {
-      const decoded: any = jwt.verify(token, JWT_SECRET);
-     const isAdmin = decoded.isAdmin ?? decoded.is_admin;
-if (!isAdmin) {
-  return res.status(403).json({ error: "Access denied. Admins only." });
-}
-
-
-      const id = parseInt(req.params.id);
-      if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
-
-      await query("DELETE FROM pre_college_summer_programs WHERE id = $1", [id]);
-
-      res.json({ message: "Summer program deleted successfully" });
-    } catch (err) {
-      console.error("Error deleting summer program:", err);
-      res.status(500).json({ error: "Internal server error" });
-    }
-  })();
-});*/
 app.delete("/admin/summer-programs/:id", authenticateToken, asyncHandler(async (req, res) => {
     if (!req.user?.isAdmin) {
         return res.status(403).json({ error: "Access denied. Admins only." });
@@ -1944,11 +1916,11 @@ app.get("/job-fairs", async (req, res) => {
     }
 });
 //--------get US states and cities for Job fair drop down list in for Admin
-// ✅ GET /us-states
 app.get("/us-states", async (req, res) => {
     try {
-        const result = await (0, db_1.query)("SELECT name FROM us_states ORDER BY name ASC");
-        res.json(result.rows.map((r) => r.name));
+        const result = await (0, db_1.query)("SELECT name, abbreviation FROM us_states ORDER BY name ASC");
+        // Return an array of objects: { name, abbreviation }
+        res.json(result.rows);
     }
     catch (err) {
         console.error("Failed to fetch states:", err);
@@ -1956,14 +1928,13 @@ app.get("/us-states", async (req, res) => {
     }
 });
 //----------Get job-fair cities for the selected states to display on the dropdown-----
-// ✅ GET /us-cities?state=Texas
 app.get("/us-cities", asyncHandler(async (req, res) => {
-    const stateName = req.query.state;
-    if (!stateName || !stateName.trim()) {
-        return res.status(400).json({ error: "Missing or invalid state name" });
+    const stateAbbreviation = req.query.state?.trim().toUpperCase();
+    if (!stateAbbreviation) {
+        return res.status(400).json({ error: "Missing or invalid state abbreviation" });
     }
-    // Get the ID of the state
-    const stateResult = await (0, db_1.query)("SELECT id FROM us_states WHERE name = $1", [stateName.trim()]);
+    // Get the ID of the state by abbreviation
+    const stateResult = await (0, db_1.query)("SELECT id FROM us_states WHERE abbreviation = $1", [stateAbbreviation]);
     if (stateResult.rows.length === 0) {
         return res.status(404).json({ error: "State not found" });
     }
@@ -2245,29 +2216,41 @@ app.delete("/admin/jobs/:id", authenticateToken, asyncHandler(async (req, res) =
 // Public: Get all active jobs, optionally filtered by job_type
 app.get("/jobs", asyncHandler(async (req, res) => {
     const { job_type, country, state, city, category } = req.query;
-    let queryStr = "SELECT * FROM jobs WHERE is_active = TRUE";
+    let queryStr = `
+      SELECT jobs.* 
+      FROM jobs
+      LEFT JOIN us_states ON jobs.state = us_states.abbreviation
+      WHERE jobs.is_active = TRUE
+    `;
     const params = [];
     if (job_type) {
         params.push(job_type);
-        queryStr += ` AND job_type = $${params.length}`;
+        queryStr += ` AND jobs.job_type = $${params.length}`;
     }
     if (country) {
         params.push(country);
-        queryStr += ` AND country = $${params.length}`;
+        queryStr += ` AND jobs.country = $${params.length}`;
     }
     if (state) {
-        params.push(state);
-        queryStr += ` AND state = $${params.length}`;
+        params.push(state); // for jobs.state
+        params.push(state); // for us_states.name
+        const stateParam1 = params.length - 1; // index of first param (jobs.state)
+        const stateParam2 = params.length; // index of second param (us_states.name)
+        queryStr += ` AND (jobs.state = $${stateParam1} OR LOWER(us_states.name) = LOWER($${stateParam2}))`;
     }
     if (city) {
-        params.push(city);
-        queryStr += ` AND city = $${params.length}`;
+        let cityStr = "";
+        if (typeof city === "string") {
+            cityStr = city.toLowerCase();
+        }
+        params.push(cityStr);
+        queryStr += ` AND LOWER(jobs.city) = $${params.length}`;
     }
     if (category) {
         params.push(category);
-        queryStr += ` AND category = $${params.length}`;
+        queryStr += ` AND jobs.category = $${params.length}`;
     }
-    queryStr += " ORDER BY posted_at DESC";
+    queryStr += " ORDER BY jobs.posted_at DESC";
     const result = await (0, db_1.query)(queryStr, params);
     res.json(result.rows);
 }));
@@ -2279,31 +2262,6 @@ app.get("/job-categories", asyncHandler(async (req, res) => {
 //---------------------
 //----------Delete Job Fairs by Admin
 // ✅ DELETE /admin/job-fairs/:id
-/* ----before new edit profile
-app.delete(
-  "/admin/job-fairs/:id",
-  authenticateToken,
-  asyncHandler(async (req: Request, res: Response) => {
-    const token = req.headers.authorization?.split(" ")[1];
-    if (!token) return res.status(401).json({ error: "Unauthorized" });
-
-    const decoded: any = jwt.verify(token, JWT_SECRET);
-    if (!decoded.is_admin && !decoded.isAdmin) {
-      return res.status(403).json({ error: "Admins only" });
-    }
-
-    const id = parseInt(req.params.id);
-    if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
-
-    try {
-      await query("DELETE FROM job_fairs WHERE id = $1", [id]);
-      res.json({ message: "Job fair deleted successfully" });
-    } catch (err) {
-      console.error("Failed to delete job fair:", err);
-      res.status(500).json({ error: "Server error" });
-    }
-  })
-); */
 app.delete("/admin/job-fairs/:id", authenticateToken, asyncHandler(async (req, res) => {
     if (!req.user?.isAdmin) {
         return res.status(403).json({ error: "Admins only" });
@@ -2323,25 +2281,6 @@ app.delete("/admin/job-fairs/:id", authenticateToken, asyncHandler(async (req, r
 //--------------------------------------
 //-------Add articles by Admin backend
 // POST /admin/articles — Create a new article (admin only)
-/* -- Before new edit profile
-
-app.get(
-  "/admin/articles",
-  authenticateToken,
-  asyncHandler(async (req: Request, res: Response) => {
-    const token = req.headers.authorization?.split(" ")[1];
-    if (!token) return res.status(401).json({ error: "Unauthorized" });
-
-    const decoded: any = jwt.verify(token, JWT_SECRET as string);
-    if (!decoded.is_admin) return res.status(403).json({ error: "Admins only" });
-
-    const result = await query(
-      "SELECT id, title, content, cover_image, author_id, published_at FROM articles ORDER BY published_at DESC"
-    );
-
-    res.json(result.rows);
-  })
-);  */
 app.get("/admin/articles", authenticateToken, asyncHandler(async (req, res) => {
     if (!req.user?.isAdmin) {
         return res.status(403).json({ error: "Admins only" });
@@ -2364,38 +2303,6 @@ app.post("/admin/articles", authenticateToken, asyncHandler(async (req, res) => 
     res.status(201).json(result.rows[0]);
 }));
 //--------Add added articles lists to admin page so they can edit and delete
-/* before edit  new profile
-app.put(
-  "/admin/articles/:id",
-  authenticateToken,
-  asyncHandler(async (req: Request, res: Response) => {
-    const articleId = parseInt(req.params.id);
-    if (isNaN(articleId)) {
-      return res.status(400).json({ error: "Invalid article ID" });
-    }
-
-    const { title, content, cover_image } = req.body;
-
-    const token = req.headers.authorization?.split(" ")[1];
-    if (!token) return res.status(401).json({ error: "Unauthorized" });
-
-    const decoded: any = jwt.verify(token, JWT_SECRET as string);
-    if (!decoded.is_admin) return res.status(403).json({ error: "Admins only" });
-
-    if (!title || !content) {
-      return res.status(400).json({ error: "Title and content are required" });
-    }
-
-    await query(
-      `UPDATE articles
-       SET title = $1, content = $2, cover_image = $3, updated_at = NOW()
-       WHERE id = $4`,
-      [title, content, cover_image || null, articleId]
-    );
-
-    res.json({ message: "✅ Article updated successfully" });
-  })
-);*/
 app.put("/admin/articles/:id", authenticateToken, asyncHandler(async (req, res) => {
     const articleId = parseInt(req.params.id);
     if (isNaN(articleId)) {
@@ -2413,28 +2320,6 @@ app.put("/admin/articles/:id", authenticateToken, asyncHandler(async (req, res) 
        WHERE id = $4`, [title, content, cover_image || null, articleId]);
     res.json({ message: "✅ Article updated successfully" });
 }));
-//-----Allow admin delete articles 
-/* before eedit new profile---
-app.delete(
-  "/admin/articles/:id",
-  authenticateToken,
-  asyncHandler(async (req: Request, res: Response) => {
-    const articleId = parseInt(req.params.id);
-    if (isNaN(articleId)) {
-      return res.status(400).json({ error: "Invalid article ID" });
-    }
-
-    const token = req.headers.authorization?.split(" ")[1];
-    if (!token) return res.status(401).json({ error: "Unauthorized" });
-
-    const decoded: any = jwt.verify(token, JWT_SECRET as string);
-    if (!decoded.is_admin) return res.status(403).json({ error: "Admins only" });
-
-    await query("DELETE FROM articles WHERE id = $1", [articleId]);
-
-    res.json({ message: "✅ Article deleted successfully" });
-  })
-); */
 app.delete("/admin/articles/:id", authenticateToken, asyncHandler(async (req, res) => {
     const articleId = parseInt(req.params.id);
     if (isNaN(articleId)) {
@@ -2448,7 +2333,21 @@ app.delete("/admin/articles/:id", authenticateToken, asyncHandler(async (req, re
 }));
 //-------Get articles grid  for articles page for frontend
 app.get("/articles", asyncHandler(async (req, res) => {
-    const result = await (0, db_1.query)("SELECT id, title, cover_image, content FROM articles ORDER BY published_at DESC");
+    const result = await (0, db_1.query)(`
+      SELECT 
+        a.id, 
+        a.title, 
+        a.cover_image, 
+        a.content,
+        COALESCE(l.likes_count, 0) AS total_likes
+      FROM articles a
+      LEFT JOIN (
+        SELECT article_id, COUNT(*) AS likes_count
+        FROM article_likes
+        GROUP BY article_id
+      ) l ON a.id = l.article_id
+      ORDER BY a.published_at DESC
+    `);
     res.json(result.rows);
 }));
 //----------Get and display individual  article page
@@ -2464,6 +2363,36 @@ app.get("/articles/:id", asyncHandler(async (req, res) => {
     }
     res.json(result.rows[0]);
 }));
+//-------routes to add like button to articles---
+// POST /articles/:id/like - Like an article
+app.post('/articles/:id/like', authenticateToken, asyncHandler(async (req, res) => {
+    const articleId = parseInt(req.params.id);
+    const userId = req.user.userId;
+    // Insert like if not already liked
+    await (0, db_1.query)(`INSERT INTO article_likes (article_id, user_id)
+     VALUES ($1, $2)
+     ON CONFLICT (article_id, user_id) DO NOTHING`, [articleId, userId]);
+    res.json({ success: true });
+}));
+// DELETE /articles/:id/like - Unlike an article
+app.delete('/articles/:id/like', authenticateToken, asyncHandler(async (req, res) => {
+    const articleId = parseInt(req.params.id);
+    const userId = req.user.userId;
+    await (0, db_1.query)(`DELETE FROM article_likes WHERE article_id = $1 AND user_id = $2`, [articleId, userId]);
+    res.json({ success: true });
+}));
+// GET /articles/:id/likes - Get total likes count and whether current user liked
+app.get('/articles/:id/likes', authenticateToken, asyncHandler(async (req, res) => {
+    const articleId = parseInt(req.params.id);
+    const userId = req.user.userId;
+    const totalLikesResult = await (0, db_1.query)(`SELECT COUNT(*) AS total FROM article_likes WHERE article_id = $1`, [articleId]);
+    const userLikedResult = await (0, db_1.query)(`SELECT 1 FROM article_likes WHERE article_id = $1 AND user_id = $2`, [articleId, userId]);
+    res.json({
+        totalLikes: parseInt(totalLikesResult.rows[0].total, 10),
+        userLiked: userLikedResult.rows.length > 0,
+    });
+}));
+//---------------------------
 //------------------------END of Admin BackEnd routes----------------------------
 //---DB check block
 (async () => {
@@ -2475,7 +2404,18 @@ app.get("/articles/:id", asyncHandler(async (req, res) => {
         console.error("Error checking DB:", err);
     }
 })();
-//-------------
+//--------------error-handling middleware block---------------
+const errorHandler = (err, req, res, next) => {
+    if (err instanceof AuthError) {
+        res.status(err.statusCode).json({ error: err.message });
+        return; // return void here
+    }
+    console.error("Unhandled error:", err);
+    res.status(500).json({ error: "Internal Server Error" });
+    return; // return void here
+};
+app.use(errorHandler);
+//-----------------------------------
 app.listen(port, () => {
     console.log(`Server running on http://localhost:${port}`);
     console.log("✅ All routes registered. Ready to receive requests.");

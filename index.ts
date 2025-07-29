@@ -3598,20 +3598,20 @@ app.get('/articles/:id/likes', authenticateToken, asyncHandler(async (req: Reque
 
 //---------------------------
 //------------Admin Rpeorts routes------------
-// GET /reports/members - total members count and list of members (id, name, email)
 app.get(
-  "/reports/members",
+  "/reports/members/new",
   authenticateToken,
-  asyncHandler(async (req: Request, res: Response) => {
-    const countResult = await query("SELECT COUNT(*) FROM users");
-    const totalMembers = parseInt(countResult.rows[0].count, 10);
-
-    const membersResult = await query("SELECT id, name, email FROM users ORDER BY name ASC");
-
-    res.json({
-      totalMembers,
-      members: membersResult.rows,
-    });
+  asyncHandler(async (req, res) => {
+    const date = req.query.date as string;
+    if (!date) return res.status(400).json({ error: "Date is required" });
+    
+    // Count new users who signed up on that date (assuming you have a created_at column)
+    const result = await query(
+      "SELECT COUNT(*) FROM users WHERE created_at::date = $1",
+      [date]
+    );
+    const newMembersCount = parseInt(result.rows[0].count, 10);
+    res.json({ newMembersCount });
   })
 );
 

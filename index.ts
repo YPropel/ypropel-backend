@@ -3687,7 +3687,6 @@ app.get(
   "/reports/visitors",
   authenticateToken,
   asyncHandler(async (req, res) => {
-       //--Check if is-admin
     if (!req.user?.isAdmin) {
       return res.status(403).json({ error: "Access denied. Admins only." });
     }
@@ -3695,7 +3694,7 @@ app.get(
     const date = req.query.date as string;
     if (!date) return res.status(400).json({ error: "Date is required" });
 
-    // Total visits from members (user_id not null) on that date (full day range)
+    // Total visits from members
     const visitorsFromMembersResult = await query(
       `SELECT COUNT(*) AS count 
        FROM visitors
@@ -3704,7 +3703,7 @@ app.get(
       [date]
     );
 
-    // Total visits from guests (user_id null) on that date (full day range)
+    // Total visits from guests
     const visitorsFromGuestsResult = await query(
       `SELECT COUNT(*) AS count 
        FROM visitors
@@ -3713,7 +3712,7 @@ app.get(
       [date]
     );
 
-    // Unique member visits count (distinct user_id) on that date
+    // Unique member visits
     const uniqueMemberVisitsResult = await query(
       `SELECT COUNT(DISTINCT user_id) AS unique_count 
        FROM visitors
@@ -3722,10 +3721,20 @@ app.get(
       [date]
     );
 
+    // Unique guest visits - assuming you log 'ip_address' or similar for guests
+    const uniqueGuestVisitsResult = await query(
+      `SELECT COUNT(DISTINCT ip_address) AS unique_guest_count
+       FROM visitors
+       WHERE visit_date >= $1::date AND visit_date < ($1::date + INTERVAL '1 day')
+         AND user_id IS NULL`,
+      [date]
+    );
+
     res.json({
       visitorsFromMembers: Number(visitorsFromMembersResult.rows[0].count) || 0,
       visitorsFromGuests: Number(visitorsFromGuestsResult.rows[0].count) || 0,
       uniqueMemberVisits: Number(uniqueMemberVisitsResult.rows[0].unique_count) || 0,
+      uniqueGuestVisits: Number(uniqueGuestVisitsResult.rows[0].unique_guest_count) || 0, // new field
     });
   })
 );

@@ -3627,7 +3627,7 @@ app.get(
     // Total visits from members (user_id not null) on that date (full day range)
     const visitorsFromMembersResult = await query(
       `SELECT COUNT(*) AS count 
-       FROM visits 
+       FROM visitors
        WHERE visit_date >= $1::date AND visit_date < ($1::date + INTERVAL '1 day')
          AND user_id IS NOT NULL`,
       [date]
@@ -3636,7 +3636,7 @@ app.get(
     // Total visits from guests (user_id null) on that date (full day range)
     const visitorsFromGuestsResult = await query(
       `SELECT COUNT(*) AS count 
-       FROM visits 
+       FROM visitors
        WHERE visit_date >= $1::date AND visit_date < ($1::date + INTERVAL '1 day')
          AND user_id IS NULL`,
       [date]
@@ -3645,7 +3645,7 @@ app.get(
     // Unique member visits count (distinct user_id) on that date
     const uniqueMemberVisitsResult = await query(
       `SELECT COUNT(DISTINCT user_id) AS unique_count 
-       FROM visits 
+       FROM visitors
        WHERE visit_date >= $1::date AND visit_date < ($1::date + INTERVAL '1 day')
          AND user_id IS NOT NULL`,
       [date]

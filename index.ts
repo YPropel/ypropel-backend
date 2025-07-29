@@ -184,7 +184,7 @@ app.use(async (req: Request, res: Response, next: NextFunction) => {
 
     // Insert into visitors table
     await query(
-      `INSERT INTO visitors (user_id, visit_date, path, ip_address, user_agent)
+      `INSERT INTO visitors (user_id, visit_date, page_url, ip_address, user_agent)
        VALUES ($1, $2, $3, $4, $5)`,
       [
         userId,

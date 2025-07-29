@@ -3657,6 +3657,11 @@ app.get(
   "/reports/members/new",
   authenticateToken,
   asyncHandler(async (req, res) => {
+      //--Check if is-admin
+    if (!req.user?.isAdmin) {
+      return res.status(403).json({ error: "Access denied. Admins only." });
+    }
+
     const date = req.query.date as string;
     if (!date) return res.status(400).json({ error: "Date is required" });
 
@@ -3675,6 +3680,11 @@ app.get(
   "/reports/visitors",
   authenticateToken,
   asyncHandler(async (req, res) => {
+       //--Check if is-admin
+    if (!req.user?.isAdmin) {
+      return res.status(403).json({ error: "Access denied. Admins only." });
+    }
+
     const date = req.query.date as string;
     if (!date) return res.status(400).json({ error: "Date is required" });
 
@@ -3719,6 +3729,11 @@ app.get(
   "/reports/members",
   authenticateToken,
   asyncHandler(async (req, res) => {
+       //--Check if is-admin
+    if (!req.user?.isAdmin) {
+      return res.status(403).json({ error: "Access denied. Admins only." });
+    }
+    
     const countResult = await query("SELECT COUNT(*) FROM users");
     const totalMembers = parseInt(countResult.rows[0].count, 10);
 

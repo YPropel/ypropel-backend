@@ -3597,6 +3597,24 @@ app.get('/articles/:id/likes', authenticateToken, asyncHandler(async (req: Reque
 
 
 //---------------------------
+//------------Admin Rpeorts routes------------
+// GET /reports/members - total members count and list of members (id, name, email)
+app.get(
+  "/reports/members",
+  authenticateToken,
+  asyncHandler(async (req: Request, res: Response) => {
+    const countResult = await query("SELECT COUNT(*) FROM users");
+    const totalMembers = parseInt(countResult.rows[0].count, 10);
+
+    const membersResult = await query("SELECT id, name, email FROM users ORDER BY name ASC");
+
+    res.json({
+      totalMembers,
+      members: membersResult.rows,
+    });
+  })
+);
+
 
 
 //------------------------END of Admin BackEnd routes----------------------------

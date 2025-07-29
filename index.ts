@@ -169,33 +169,40 @@ app.use(optionalAuthenticateToken);  // <-- here, early middleware
 // --------Middleware to log visitor info for admin reports routes
 app.use(async (req: Request, res: Response, next: NextFunction) => {
   try {
-    // We only log GET requests (you can adjust as needed)
     if (req.method !== "GET") {
       return next();
     }
 
-    // Get user id if logged in (from your authenticateToken middleware user object)
-    // For visitor logging, user might be undefined for guests
     const userId = req.user?.userId || null;
+    const visitDate = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+    const pageUrl = req.originalUrl || req.url;
 
-    // Use today's date (visit_date), ignoring time (UTC)
-    // Or use current timestamp and store separately if preferred
-    const visitDate = new Date().toISOString().slice(0, 10); // YYYY-MM-DD format
+    // Optional: skip logging for admin users
+    if (req.user?.isAdmin) {
+      return next();
+    }
 
-    // Insert into visitors table
-   await query(
-  `INSERT INTO visitors (user_id, visit_date, page_url)
-   VALUES ($1, $2, $3)`,
-  [userId || null, new Date(), req.originalUrl || req.url]
-);
+    // Check if visit already logged for this user, page, and date
+    const existsResult = await query(
+      `SELECT 1 FROM visitors WHERE user_id = $1 AND visit_date = $2 AND page_url = $3 LIMIT 1`,
+      [userId, visitDate, pageUrl]
+    );
 
+    if (existsResult.rowCount === 0) {
+      await query(
+        `INSERT INTO visitors (user_id, visit_date, page_url) VALUES ($1, $2, $3)`,
+        [userId, visitDate, pageUrl]
+      );
+    }
 
     next();
   } catch (error) {
     console.error("Error logging visitor:", error);
-    next(); // Don't block request if logging fails
+    next();
   }
 });
+
+
 //----------------------------
 
 // ===================
@@ -3733,7 +3740,7 @@ app.get(
     if (!req.user?.isAdmin) {
       return res.status(403).json({ error: "Access denied. Admins only." });
     }
-    
+
     const countResult = await query("SELECT COUNT(*) FROM users");
     const totalMembers = parseInt(countResult.rows[0].count, 10);
 

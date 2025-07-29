@@ -1,26 +1,20 @@
 import express, { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import axios from "axios";
-const cheerio = require("cheerio");
-
 import { query } from "../db";
-import { google } from "googleapis";
-import puppeteer from "puppeteer";
-
-
-import fs from "fs";
-import path from "path";
 
 import Parser from "rss-parser";
 
 const parser = new Parser({
   headers: {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; x64)...",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)...",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.5",
     "Connection": "keep-alive"
   }
 });
+
+
 
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || "your_jwt_secret_key";
@@ -203,7 +197,107 @@ router.post(
   "/import-entry-jobs",
   adminOnly,
   asyncHandler(async (req: AuthRequest, res: Response) => {
-    // Your existing Adzuna import code here
+    const ADZUNA_APP_ID = process.env.ADZUNA_APP_ID!;
+    const ADZUNA_APP_KEY = process.env.ADZUNA_APP_KEY!;
+    const ADZUNA_COUNTRY = "us";
+
+    const {
+      keyword = "",
+      location = "United States",
+      pages = 6,
+      job_type = "entry_level",
+    } = req.body;
+
+    const excludeKeywords = [
+      "cook",
+      "customer support",
+      "technician",
+      "cashier",
+      "driver",
+      "security",
+      "hourly",
+      "shift supervisor",
+      "supervisor",
+      "janitor",
+    ];
+
+    function isValidJobTitle(title: string): boolean {
+      const lowerTitle = title.toLowerCase();
+      return !excludeKeywords.some((kw) => lowerTitle.includes(kw));
+    }
+
+    let insertedCount = 0;
+
+    // Fetch valid categories from DB
+    const validCategories = await fetchJobCategories();
+
+    for (let page = 1; page <= pages; page++) {
+      console.log(`Fetching Adzuna page ${page}...`);
+
+      const adzunaUrl = `https://api.adzuna.com/v1/api/jobs/${ADZUNA_COUNTRY}/search/${page}?app_id=${ADZUNA_APP_ID}&app_key=${ADZUNA_APP_KEY}&results_per_page=50&max_days_old=30&content-type=application/json${keyword ? `&what=${encodeURIComponent(keyword)}` : ""}${location ? `&where=${encodeURIComponent(location)}` : ""}`;
+
+      const response = await axios.get(adzunaUrl);
+      const jobs = response.data.results;
+      console.log(`Fetched ${jobs.length} jobs from Adzuna.`);
+
+      for (const job of jobs) {
+        if (!job.title || !isValidJobTitle(job.title)) {
+          console.log(`Skipped job due to excluded title: ${job.title}`);
+          continue;
+        }
+
+        const existing = await query(
+          "SELECT id FROM jobs WHERE title = $1 AND company = $2 AND location = $3",
+          [job.title, job.company?.display_name || null, job.location?.display_name || null]
+        );
+
+        if (existing.rows.length > 0) {
+          console.log(`Job already exists: ${job.title} at ${job.company?.display_name}`);
+          continue;
+        }
+
+        const loc = job.location || {};
+        const city = loc.area ? loc.area[1] || null : null;
+        const state = loc.area ? loc.area[2] || null : null;
+        const country = loc.area ? loc.area[0] || null : null;
+
+        // Infer category and map to DB categories
+        const inferredCategoryRaw = job.category?.label || inferCategoryFromTitle(job.title);
+        const inferredCategory = mapCategoryToValid(inferredCategoryRaw, validCategories);
+
+        try {
+          await query(
+            `INSERT INTO jobs (
+              title, description, category, company, location, requirements,
+              apply_url, posted_at, is_active, job_type, country, state, city
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+            [
+              job.title,
+              job.description,
+              inferredCategory,
+              job.company?.display_name || null,
+              job.location?.display_name || null,
+              null,
+              job.redirect_url,
+              job.created,
+              true,
+              job_type,
+              country,
+              state,
+              city,
+            ]
+          );
+          insertedCount++;
+          console.log(`Inserted job: ${job.title}`);
+        } catch (error) {
+          console.error(`Error inserting job ${job.title}:`, error);
+        }
+      }
+    }
+
+    console.log(`Adzuna import completed. Total inserted jobs: ${insertedCount}`);
+
+    res.json({ success: true, inserted: insertedCount });
   })
 );
 
@@ -212,547 +306,373 @@ router.post(
   "/import-careerjet-jobs",
   adminOnly,
   asyncHandler(async (req: AuthRequest, res: Response) => {
-    // Your existing Careerjet import code here
+    const CAREERJET_AFFID = process.env.CAREERJET_AFFID!;
+
+    const keyword = toSingleString(req.body.keyword) || "";
+    const location = toSingleString(req.body.location) || "United States";
+    const pages = Number(req.body.pages) || 10;
+    const job_type = toSingleString(req.body.job_type) || "entry_level";
+
+    const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    let insertedCount = 0;
+
+    const userIp = req.ip || (req.headers["x-forwarded-for"] as string) || "8.8.8.8";
+    const userAgent = req.headers["user-agent"] || "ypropel-backend/1.0";
+
+    // Keep your original exclude keywords
+    const excludeKeywords = [
+      "technician",
+      "shift",
+      "customer service",
+      "hourly",
+      "cook",
+      "nurse",
+    ];
+
+    // Keep your original include keywords
+    const includeKeywords = [
+      "engineer",
+      "software",
+      "product manager",
+      "finance",
+      "accounting",
+      "architect",
+      "data science",
+      "cyber security",
+      "cybersecurity",
+      "analyst",
+      "developer",
+      "consultant",
+      "marketing",
+      "sales",
+      "business analyst",
+      "quality assurance",
+      "qa",
+      "researcher",
+      "designer",
+      "project manager",
+      "operations",
+      "human resources",
+      "hr",
+      "recruiter",
+      "legal",
+      "compliance",
+      "audit",
+      "controller",
+      "tax",
+      "strategy",
+      "planner",
+      "administrator",
+      "executive assistant",
+      "account manager",
+      "customer success",
+      "content writer",
+      "copywriter",
+      "public relations",
+      "communications",
+      "trainer",
+      "product owner",
+      "scrum master",
+      "software engineer",
+      "business development",
+      "ux designer",
+      "ui designer",
+      "graphic designer",
+      "digital marketing",
+      "social media",
+      "information security",
+      "network engineer",
+      "system administrator",
+      "database administrator",
+      "cloud engineer",
+      "financial analyst",
+      "risk analyst",
+      "portfolio manager",
+      "operations manager",
+      "supply chain",
+      "logistics",
+      "procurement",
+      "technical writer",
+      "event coordinator",
+      "content strategist",
+      "brand manager",
+      "accountant",
+      "tax specialist",
+      "payroll",
+      "business intelligence",
+      "data analyst",
+      "machine learning engineer",
+      "ai engineer",
+      "software developer",
+      "devops engineer",
+      "product specialist",
+      "corporate trainer",
+      "customer service manager",
+      "marketing coordinator",
+      "office manager",
+      "financial controller",
+      "investment analyst",
+      "credit analyst",
+      "legal assistant",
+      "paralegal",
+      "corporate communications",
+      "editor",
+      "auditor",
+      "compliance officer",
+      "market researcher",
+      "quality control",
+      "procurement specialist",
+    ];
+
+    function containsKeyword(text: string, keywords: string[]): boolean {
+      const lowerText = text.toLowerCase();
+      return keywords.some((kw) => lowerText.includes(kw));
+    }
+
+    // Fetch valid categories from DB once
+    const validCategories = await fetchJobCategories();
+
+    for (let page = 1; page <= pages; page++) {
+      console.log(`Fetching Careerjet page ${page}...`);
+
+      const careerjetUrl = `http://public.api.careerjet.net/search?affid=${CAREERJET_AFFID}&keywords=${encodeURIComponent(
+        keyword
+      )}&location=${encodeURIComponent(location)}&pagesize=50&pagenumber=${page}&sort=relevance&user_ip=${encodeURIComponent(
+        userIp
+      )}&user_agent=${encodeURIComponent(userAgent)}`;
+
+      try {
+        const response = await axios.get(careerjetUrl, {
+          headers: {
+            "User-Agent": userAgent,
+          },
+        });
+
+        const data = response.data;
+
+        if (data.type === "ERROR") {
+          console.error("Careerjet API error:", data.error);
+          return res.status(500).json({ error: "Careerjet API error: " + data.error });
+        }
+
+        if (data.type === "JOBS" && data.jobs && Array.isArray(data.jobs)) {
+          console.log(`Fetched ${data.jobs.length} jobs from Careerjet.`);
+
+          for (const job of data.jobs) {
+            if (!job.title) {
+              console.log("Skipped job with missing title");
+              continue;
+            }
+
+            if (containsKeyword(job.title, excludeKeywords)) {
+              console.log(`Excluded job by exclude keyword: ${job.title}`);
+              continue;
+            }
+
+            if (!containsKeyword(job.title, includeKeywords)) {
+              console.log(`Skipped job - does not match include keywords: ${job.title}`);
+              continue;
+            }
+
+            // Parse city and state from job.locations string
+            const locParts = (job.locations || "").split(",").map((s: string) => s.trim());
+            const city = locParts[0] || null;
+            const stateFull = locParts[1] || null;
+
+            // Map full state name or abbreviation to abbreviation
+            let stateAbbreviation: string | null = null;
+            if (stateFull) {
+              if (stateFull.length === 2) {
+                stateAbbreviation = stateFull.toUpperCase();
+              } else {
+                const result = await query(
+                  "SELECT abbreviation FROM us_states WHERE LOWER(name) = LOWER($1) LIMIT 1",
+                  [stateFull]
+                );
+                if (result.rows.length > 0) {
+                  stateAbbreviation = result.rows[0].abbreviation;
+                }
+              }
+            }
+
+            // Infer category from title and map to DB category
+            const inferredCategoryRaw = inferCategoryFromTitle(job.title);
+            const inferredCategory = mapCategoryToValid(inferredCategoryRaw, validCategories);
+
+            const existing = await query(
+              "SELECT id FROM jobs WHERE title = $1 AND company = $2 AND location = $3",
+              [job.title, job.company || null, job.locations || null]
+            );
+
+            if (existing.rows.length > 0) {
+              console.log(`Job already exists: ${job.title} at ${job.company}`);
+              continue;
+            }
+
+            try {
+              await query(
+                `INSERT INTO jobs (
+                  title, description, category, company, location, requirements,
+                  apply_url, posted_at, is_active, job_type, country, state, city
+                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+                [
+                  job.title,
+                  job.description,
+                  inferredCategory,
+                  job.company || null,
+                  job.locations || null,
+                  null,
+                  job.url,
+                  new Date(job.date),
+                  true,
+                  job_type,
+                  "United States",
+                  stateAbbreviation,
+                  city,
+                ]
+              );
+              insertedCount++;
+              console.log(`Inserted internship job: ${job.title}`);
+            } catch (error) {
+              console.error(`Error inserting internship job ${job.title}:`, error);
+            }
+          }
+        }
+      } catch (error) {
+        console.error("Error fetching Careerjet internship jobs data:", error);
+      }
+    }
+
+    console.log(`Careerjet internship jobs import completed. Total inserted jobs: ${insertedCount}`);
+
+    res.json({ success: true, inserted: insertedCount });
   })
 );
+
+// --- Other existing routes unchanged ---
 
 // ----------------- SIMPLYHIRED IMPORT -------------------
 router.post(
   "/import-simplyhired-jobs",
   adminOnly,
   asyncHandler(async (req: AuthRequest, res: Response) => {
-    // Your existing SimplyHired import code here
-  })
-);
+    const parser = new Parser();
+    const { q = "software engineer", location = "" } = req.body;
 
-// ----------------- REDDIT IMPORT -------------------
-router.post(
-  "/import-reddit-internships",
-  adminOnly,
-  asyncHandler(async (req: AuthRequest, res: Response) => {
-    // Your existing Reddit import code here
-  })
-);
-
-// ----------------- REMOTIVE IMPORT -------------------
-router.post(
-  "/import-remotive-internships",
-  adminOnly,
-  asyncHandler(async (req: AuthRequest, res: Response) => {
-    // Your existing Remotive import code here
-  })
-);
-
-// ----------------- LINKEDIN NEWSLETTER IMPORT -------------------
-interface Job {
-  title: string;
-  company: string;
-  location: string;
-  description: string;
-  applyUrl: string;
+    // Construct SimplyHired RSS feed URL - update as needed
+    const baseUrl = "https://www.simplyhired.com/search/rss";
+    const urlParams = new URLSearchParams();
+    urlParams.append("q", q);
+    if (location) urlParams.append("l", location);
+    
+    
+    const rssUrl = req.body.rssUrl;
+if (!rssUrl) {
+  return res.status(400).json({ error: "rssUrl parameter is required." });
 }
-router.post(
-  "/import-linkedin-detailed-jobs",
-  adminOnly,
-  asyncHandler(async (req: AuthRequest, res: Response) => {
-    const { emailHtml, seeAllJobsUrl } = req.body;
-
-    let urlToFetch = seeAllJobsUrl;
-
-    if (!urlToFetch && emailHtml) {
-      const $email = cheerio.load(emailHtml);
-      const link = $email("a:contains('See all jobs')").attr("href");
-      if (!link) {
-        return res.status(400).json({ error: "Could not find 'See all jobs' link in email HTML" });
-      }
-      urlToFetch = link;
-    }
-
-    if (!urlToFetch) {
-      return res.status(400).json({ error: "No 'See all jobs' URL provided or found" });
-    }
-
-    console.log(`Launching Puppeteer to scrape LinkedIn jobs from: ${urlToFetch}`);
-
-    const browser = await puppeteer.launch({
-      args: ["--no-sandbox", "--disable-setuid-sandbox"],
-      headless: true,
-    });
-    const page = await browser.newPage();
-
-    await page.setUserAgent(
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
-    );
-
-    await page.goto(urlToFetch, { waitUntil: "networkidle2" });
-
-    await page.waitForSelector(".jobs-search-results__list", { timeout: 15000 }).catch(() => {});
-
-    const jobs: Job[] = await page.evaluate(() => {
-      const jobElements = document.querySelectorAll(".jobs-search-results__list-item");
-      const jobList: Job[] = [];
-
-      jobElements.forEach((jobEl) => {
-        const titleEl = jobEl.querySelector("a.job-card-list__title, a.base-card__full-link");
-        const companyEl = jobEl.querySelector("a.job-card-container__company-name, h4.base-search-card__subtitle");
-        const locationEl = jobEl.querySelector(".job-card-container__metadata-item, span.job-search-card__location");
-        const descriptionEl = jobEl.querySelector(".job-card-list__snippet, p.job-snippet, div.job-card-container__description");
-
-        if (titleEl) {
-          jobList.push({
-            title: titleEl.textContent?.trim() || "",
-            company: companyEl?.textContent?.trim() || "",
-            location: locationEl?.textContent?.trim() || "",
-            description: descriptionEl?.textContent?.trim() || "",
-            applyUrl: titleEl.getAttribute("href") || "",
-          });
-        }
-      });
-
-      return jobList;
-    });
-
-    await browser.close();
-
-    console.log(`Puppeteer scraped ${jobs.length} jobs.`);
-
-    const validCategories = await fetchJobCategories();
-    let insertedCount = 0;
-
-    for (const job of jobs) {
-      try {
-        const exists = await query("SELECT id FROM jobs WHERE title = $1 AND apply_url = $2", [
-          job.title,
-          job.applyUrl,
-        ]);
-        if (exists.rows.length > 0) {
-          console.log(`Skipping duplicate job: ${job.title}`);
-          continue;
-        }
-
-        const inferredCategoryRaw = inferCategoryFromTitle(job.title);
-        const inferredCategory = mapCategoryToValid(inferredCategoryRaw, validCategories);
-
-        console.log(`Inserting job: ${job.title} at ${job.company}`);
-
-        await query(
-          `INSERT INTO jobs (
-            title, description, category, company, location,
-            apply_url, posted_at, is_active, job_type, country, state, city
-          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-          [
-            job.title,
-            job.description,
-            inferredCategory,
-            job.company || "LinkedIn",
-            job.location || "Unknown",
-            job.applyUrl,
-            new Date(),
-            true,
-            "linkedin_detailed",
-            "United States",
-            null,
-            null,
-          ]
-        );
-        insertedCount++;
-      } catch (error) {
-        console.error(`Failed to insert job ${job.title}:`, error);
-      }
-    }
-
-    res.json({ message: `Imported ${insertedCount} new jobs from LinkedIn detailed.` });
-  })
-);
-
-// --------- GMAIL FETCH ROUTE WITH TOKEN REFRESH AND SAVE -----------
-
-interface EmailData {
-  id: string;
-  snippet?: string | null;
-  payload?: any; 
-  internalDate?: string | null;
-  threadId?: string | null;
-}
-
-console.log("Registering /fetch-gmail-emails route");
-router.post(
-  "/fetch-gmail-emails",
-  authenticateToken,
-  adminOnly,
-  asyncHandler(async (req: AuthRequest, res: Response) => {
-    try {
-      const tokenJsonStr = process.env.GOOGLE_OAUTH_TOKEN_JSON;
-      if (!tokenJsonStr) {
-        return res.status(500).json({ error: "No Google OAuth token found in environment variables." });
-      }
-
-      let tokens;
-      try {
-        tokens = JSON.parse(tokenJsonStr);
-      } catch (e) {
-        console.error("Failed to parse GOOGLE_OAUTH_TOKEN_JSON:", e);
-        return res.status(500).json({ error: "Invalid Google OAuth token JSON format." });
-      }
-
-      const oauth2Client = new google.auth.OAuth2(
-        process.env.GOOGLE_CLIENT_ID,
-        process.env.GOOGLE_CLIENT_SECRET,
-        process.env.GOOGLE_REDIRECT_URI
-      );
-      oauth2Client.setCredentials(tokens);
-
-      // Setup token refresh event to update tokens in env (optional)
-      oauth2Client.on("tokens", (newTokens) => {
-        if (newTokens.refresh_token) {
-          tokens.refresh_token = newTokens.refresh_token;
-        }
-        if (newTokens.access_token) {
-          tokens.access_token = newTokens.access_token;
-          tokens.expiry_date = newTokens.expiry_date;
-          // Note: To persist updated tokens, you'd need to save them somewhere (file, DB, or env)
-          // but environment variables usually can't be updated at runtime.
-          console.log("New access token refreshed.");
-        }
-      });
-
-      // Force refresh token to update access token if expired
-      await oauth2Client.getAccessToken();
-
-      const gmail = google.gmail({ version: "v1", auth: oauth2Client });
-
-      const listResponse = await gmail.users.messages.list({
-        userId: "me",
-        maxResults: 10,
-        q: "label:INBOX",
-      });
-
-      const messages = listResponse.data.messages || [];
-      const emailData: EmailData[] = [];
-
-      for (const message of messages) {
-        const msg = await gmail.users.messages.get({
-          userId: "me",
-          id: message.id!,
-          format: "full",
-        });
-
-        emailData.push({
-          id: message.id!,
-          snippet: msg.data.snippet,
-          payload: msg.data.payload,
-          internalDate: msg.data.internalDate || null,
-          threadId: msg.data.threadId || null,
-        });
-      }
-
-      res.json({ emails: emailData });
-    } catch (error) {
-      console.error("Error fetching Gmail emails:", error);
-      res.status(500).json({ error: "Failed to fetch Gmail emails" });
-    }
-  })
-);
+const feed = await parser.parseURL(rssUrl);
 
 
-
-router.post(
-  "/import-wayup-detailed-jobs",
-  adminOnly,
-  asyncHandler(async (req: AuthRequest, res) => {
-    const { emailHtml, seeAllJobsUrl } = req.body;
-
-    let htmlToParse = "";
-
-    if (seeAllJobsUrl) {
-      // Fetch WayUp jobs page HTML
-      try {
-        const response = await axios.get(seeAllJobsUrl, {
-          headers: {
-            "User-Agent":
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
-          },
-        });
-        htmlToParse = response.data;
-      } catch (error) {
-        console.error("Failed to fetch WayUp jobs page:", error);
-        return res.status(500).json({ error: "Failed to fetch WayUp jobs page" });
-      }
-    } else if (emailHtml) {
-      htmlToParse = emailHtml;
-    } else {
-      return res.status(400).json({ error: "Either emailHtml or seeAllJobsUrl is required" });
-    }
-
-    const $ = cheerio.load(htmlToParse);
+    // Fetch valid categories from DB once
     const validCategories = await fetchJobCategories();
 
-    const jobs: Array<{
-      title: string;
-      company: string;
-      location: string;
-      description: string;
-      applyUrl: string;
-    }> = [];
+    let inserted = 0;
+    let updated = 0;
 
-    // Selector example based on WayUp’s jobs page HTML structure - adjust if needed
-    $(".job-listing, .job-card").each((_, el) => {
-      const el$ = $(el);
-      const title = el$.find(".job-title, h3").text().trim();
-      const company = el$.find(".company-name").text().trim();
-      const location = el$.find(".job-location").text().trim();
-      const description = el$.find(".job-description").text().trim();
-      const applyUrl = el$.find("a.apply-button, a.job-link").attr("href") || "";
+    for (const item of feed.items) {
+      const sourceJobId = item.guid || item.link || "";
 
-      if (title && applyUrl) {
-        jobs.push({ title, company, location, description, applyUrl });
-      }
-    });
+      if (!sourceJobId) continue;
 
-    console.log(`Parsed ${jobs.length} jobs from WayUp.`);
-
-    let insertedCount = 0;
-
-    for (const job of jobs) {
-      try {
-        const exists = await query("SELECT id FROM jobs WHERE title = $1 AND apply_url = $2", [
-          job.title,
-          job.applyUrl,
-        ]);
-
-        if (exists.rows.length > 0) {
-          console.log(`Skipping duplicate job: ${job.title}`);
-          continue;
-        }
-
-        const inferredCategoryRaw = inferCategoryFromTitle(job.title);
-        const inferredCategory = mapCategoryToValid(inferredCategoryRaw, validCategories);
-
-        await query(
-          `INSERT INTO jobs (
-            title, description, category, company, location,
-            apply_url, posted_at, is_active, job_type, country, state, city
-          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-          [
-            job.title,
-            job.description,
-            inferredCategory,
-            job.company || "WayUp",
-            job.location || "Unknown",
-            job.applyUrl,
-            new Date(),
-            true,
-            "wayup_detailed",
-            "United States",
-            null,
-            null,
-          ]
-        );
-        insertedCount++;
-      } catch (error) {
-        console.error(`Failed to insert job ${job.title}:`, error);
-      }
-    }
-
-    res.json({ message: `Imported ${insertedCount} new jobs from WayUp.` });
-  })
-);
-// ----- NEW: Import jobs from plain email text (simple example) -----
-
-interface JobFromEmail {
-  title: string;
-  company: string;
-  location: string;
-  description: string;
-  applyUrl: string;
-}
-
-function parseJobsFromEmailText(text: string): JobFromEmail[] {
-  const jobs: JobFromEmail[] = [];
-  const lines = text.split("\n");
-
-  for (const line of lines) {
-    const match = line.match(/Title:\s*(.+),\s*Company:\s*(.+),\s*Location:\s*(.+)/i);
-    if (match) {
-      jobs.push({
-        title: match[1].trim(),
-        company: match[2].trim(),
-        location: match[3].trim(),
-        description: "",
-        applyUrl: "",
-      });
-    }
-  }
-  return jobs;
-}
-
-// New route to import LinkedIn jobs from "See all jobs" page URL or from emailHtml
-router.post(
-  "/import-linkedin-detailed-jobs",
-  adminOnly,
-  asyncHandler(async (req: AuthRequest, res: Response) => {
-    const { emailHtml, seeAllJobsUrl } = req.body;
-
-    let urlToFetch = seeAllJobsUrl;
-
-    // If only emailHtml is provided, try to extract "See all jobs" link from it
-    if (!urlToFetch && emailHtml) {
-      const $email = cheerio.load(emailHtml);
-      const link = $email("a:contains('See all jobs')").attr("href");
-      if (!link) {
-        return res.status(400).json({ error: "Could not find 'See all jobs' link in email HTML" });
-      }
-      urlToFetch = link;
-    }
-
-    if (!urlToFetch) {
-      return res.status(400).json({ error: "No 'See all jobs' URL provided or found" });
-    }
-
-    // Fetch LinkedIn jobs page HTML
-    const response = await axios.get(urlToFetch, {
-      headers: {
-        // Mimic a browser user agent
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
-        // Add any LinkedIn cookies or auth headers here if needed to access the page
-      },
-    });
-
-    const $ = cheerio.load(response.data);
-
-    const validCategories = await fetchJobCategories();
-
-    const jobs: Array<{
-      title: string;
-      company: string;
-      location: string;
-      description: string;
-      applyUrl: string;
-    }> = [];
-
-    // NOTE: LinkedIn DOM structure can change frequently. Adjust selectors accordingly.
-
-    $(".jobs-search-results__list-item").each((_, elem) => {
-      const el = $(elem);
-
-      // Job title
-      const title = el.find("a.job-card-list__title, a.base-card__full-link").text().trim();
-
-      // Company name
-      const company = el.find("a.job-card-container__company-name, h4.base-search-card__subtitle").text().trim();
-
-      // Location
-      const location = el.find(".job-card-container__metadata-item, span.job-search-card__location").text().trim();
-
-      // Apply URL
-      const applyUrl = el.find("a.job-card-list__title, a.base-card__full-link").attr("href") || "";
-
-      // Description snippet (LinkedIn usually does not have full description on listing page)
-      const description = el.find(".job-card-list__snippet, p.job-snippet, div.job-card-container__description").text().trim() || "";
-
-      if (title && applyUrl) {
-        jobs.push({ title, company, location, description, applyUrl });
-      }
-    });
-
-    // Insert into DB if not duplicate
-    let insertedCount = 0;
-    for (const job of jobs) {
-      // Check for existing job by title + applyUrl
-      const exists = await query(
-        "SELECT id FROM jobs WHERE title = $1 AND apply_url = $2",
-        [job.title, job.applyUrl]
-      );
-      if (exists.rows.length > 0) continue;
-
-      const inferredCategoryRaw = inferCategoryFromTitle(job.title);
-      const inferredCategory = mapCategoryToValid(inferredCategoryRaw, validCategories);
-
-      await query(
-        `INSERT INTO jobs (
-          title, description, category, company, location,
-          apply_url, posted_at, is_active, job_type, country, state, city
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-        [
-          job.title,
-          job.description,
-          inferredCategory,
-          job.company || "LinkedIn",
-          job.location || "Unknown",
-          job.applyUrl,
-          new Date(),
-          true,
-          "linkedin_detailed",
-          "United States",
-          null,
-          null,
-        ]
-      );
-      insertedCount++;
-    }
-
-    res.json({ message: `Imported ${insertedCount} new detailed jobs from LinkedIn.` });
-  })
-);
-
-
-
-router.post(
-  "/import-jobs-from-email",
-  adminOnly,
-  asyncHandler(async (req: AuthRequest, res: Response) => {
-    const { emailText } = req.body;
-    if (!emailText) {
-      return res.status(400).json({ error: "emailText is required in the body" });
-    }
-
-    const validCategories = await fetchJobCategories();
-    const jobsToImport = parseJobsFromEmailText(emailText);
-
-    let insertedCount = 0;
-
-    for (const job of jobsToImport) {
+      // Check if job already exists
       const existing = await query(
-        "SELECT id FROM jobs WHERE title = $1 AND company = $2 AND location = $3",
-        [job.title, job.company, job.location]
+        "SELECT id FROM jobs WHERE source_job_id = $1 LIMIT 1",
+        [sourceJobId]
       );
 
-      if (existing.rows.length > 0) {
-        continue;
+      // Map category from feed item categories or infer from title
+      const categoryName = item.categories && item.categories.length > 0 ? item.categories[0] : "";
+     let categoryId: string | null = null;
+
+      if (categoryName) {
+        categoryId = await query(
+          "SELECT id FROM job_categories WHERE LOWER(name) = LOWER($1) LIMIT 1",
+          [categoryName.trim()]
+        ).then(res => (res.rows.length > 0 ? res.rows[0].id : null));
+      }
+      if (!categoryId) {
+        // fallback: infer category from title
+        const inferred = inferCategoryFromTitle(item.title || "");
+        categoryId = mapCategoryToValid(inferred, validCategories);
       }
 
-      const inferredCategoryRaw = inferCategoryFromTitle(job.title);
-      const inferredCategory = mapCategoryToValid(inferredCategoryRaw, validCategories);
+      // Simple location inference
+      let jobLocation = "onsite";
+      const textToCheck = `${item.title} ${item.contentSnippet}`.toLowerCase();
+      if (textToCheck.includes("remote")) jobLocation = "remote";
+      else if (textToCheck.includes("hybrid")) jobLocation = "hybrid";
 
-      try {
+      const jobData = {
+        title: item.title || "",
+        description: item.content || "",
+        category: categoryId,
+        company: item.creator || item["dc:creator"] || "Unknown",
+        location: jobLocation,
+        requirements: "",
+        apply_url: item.link || "",
+        posted_by: req.user?.userId || 1,
+        posted_at: item.pubDate ? new Date(item.pubDate) : new Date(),
+        is_active: true,
+        expires_at: null,
+        salary: "",
+        job_type: "",
+        country: "",
+        state: "",
+        city: "",
+        source_job_id: sourceJobId,
+      };
+
+      if (existing.rows.length === 0) {
         await query(
           `INSERT INTO jobs (
-            title, description, category, company, location,
-            apply_url, posted_at, is_active, job_type, country, state, city
-          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+            title, description, category, company, location, requirements,
+            apply_url, posted_by, posted_at, is_active, expires_at, salary, job_type,
+            country, state, city, source_job_id
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
           [
-            job.title,
-            job.description,
-            inferredCategory,
-            job.company,
-            job.location,
-            job.applyUrl,
-            new Date(),
-            true,
-            "email_import",
-            "United States",
-            null,
-            null,
+            jobData.title,
+            jobData.description,
+            jobData.category,
+            jobData.company,
+            jobData.location,
+            jobData.requirements,
+            jobData.apply_url,
+            jobData.posted_by,
+            jobData.posted_at,
+            jobData.is_active,
+            jobData.expires_at,
+            jobData.salary,
+            jobData.job_type,
+            jobData.country,
+            jobData.state,
+            jobData.city,
+            jobData.source_job_id,
           ]
         );
-        insertedCount++;
-      } catch (error) {
-        console.error(`Error inserting job ${job.title}:`, error);
+        inserted++;
+      } else {
+        // Optionally update existing record here
+        updated++;
       }
     }
 
-    res.json({ message: `Imported ${insertedCount} new jobs from email text.` });
+    res.json({ message: `SimplyHired import complete. Inserted: ${inserted}, Updated: ${updated}` });
   })
 );
+
 
 export default router;

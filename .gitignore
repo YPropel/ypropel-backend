@@ -43,3 +43,6 @@ next-env.d.ts
 # backend dependencies and build
 ypropel-backend/node_modules/
 ypropel-backend/dist/
+
+ypropel-backend/
+

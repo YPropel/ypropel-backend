@@ -2021,6 +2021,33 @@ if (Number(created_by) !== Number(userId)) {
   }
 });
 //---------------------------------------------------------------------------------
+//-------------Majors list route
+app.get("/api/majors", async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit as string) || 100;
+    const offset = parseInt(req.query.offset as string) || 0;
+
+    const baseQuery = `FROM majors`;
+    const queryParams: any[] = [];
+
+    // Get total count
+    const countResult = await query(`SELECT COUNT(*) ${baseQuery}`, queryParams);
+    const totalCount = parseInt(countResult.rows[0].count, 10);
+
+    // Get paged results
+    queryParams.push(limit);
+    queryParams.push(offset);
+    const dataResult = await query(
+      `SELECT id, name, description, popular_universities, cover_photo_url ${baseQuery} ORDER BY name LIMIT $${queryParams.length - 1} OFFSET $${queryParams.length}`,
+      queryParams
+    );
+
+    res.json({ totalCount, majors: dataResult.rows });
+  } catch (error) {
+    console.error("Error fetching majors:", error);
+    res.status(500).json({ error: "Failed to fetch majors" });
+  }
+});
 
 //---------PitchPoint Video---------
 

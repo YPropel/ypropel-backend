@@ -3615,6 +3615,21 @@ app.get(
   })
 );
 
+app.get(
+  "/reports/visitors",
+  authenticateToken,
+  asyncHandler(async (req, res) => {
+    const date = req.query.date as string;
+    if (!date) return res.status(400).json({ error: "Date is required" });
+    
+    // Your query logic here to get visitors from members and guests on date
+    // e.g.:
+    const visitorsFromMembers = 25; // replace with real query
+    const visitorsFromGuests = 50;  // replace with real query
+
+    res.json({ visitorsFromMembers, visitorsFromGuests });
+  })
+);
 
 
 //------------------------END of Admin BackEnd routes----------------------------

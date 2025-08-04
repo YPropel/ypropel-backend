@@ -3847,6 +3847,33 @@ app.post(
     }
   })
 );
+// GET route to fetch company details by companyId
+app.get(
+  "/companies/:companyId",
+  asyncHandler(async (req: Request, res: Response) => {
+    const { companyId } = req.params; // Get the companyId from the request URL
+
+    try {
+      // Query to get the company details by companyId
+      const result = await query(
+        `SELECT id, name, description, location, industry, logo_url, created_at, updated_at
+         FROM companies WHERE id = $1`,
+        [companyId]
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(404).json({ error: "Company not found" });
+      }
+
+      const company = result.rows[0];
+      res.status(200).json(company); // Return the company data to the frontend
+    } catch (error) {
+      console.error("Error fetching company details:", error);
+      res.status(500).json({ error: "Internal Server Error" });
+    }
+  })
+);
+
 
 // --- Post a Job (linked to a company)
 app.post(
@@ -3889,6 +3916,8 @@ app.post(
     }
   })
 );
+
+
 
 
 //--------------end of companies profiles routes----------------

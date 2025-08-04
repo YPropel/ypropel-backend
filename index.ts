@@ -3879,14 +3879,7 @@ app.get(
 // --- Post a Job (linked to a company)
 app.post(
   "/companies",
-  authenticateToken,
   asyncHandler(async (req: Request, res: Response) => {
-    // Ensure the user is authenticated
-    const userId = req.user?.userId;
-    if (!userId) {
-      return res.status(401).json({ error: "Unauthorized" });
-    }
-
     // Destructure the request body
     const { name, description, location, industry, logoUrl } = req.body;
 
@@ -3896,12 +3889,12 @@ app.post(
     }
 
     try {
-      // Insert new company profile linked to user ID
+      // Insert new company profile (no user verification required here)
       const result = await query(
-        `INSERT INTO companies (user_id, name, description, location, industry, logo_url, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+        `INSERT INTO companies (name, description, location, industry, logo_url, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
          RETURNING *`, // Using RETURNING * to return the entire inserted row
-        [userId, name, description, location, industry, logoUrl || null]
+        [name, description, location, industry, logoUrl || null]
       );
 
       // Send the inserted company details back as the response
@@ -3913,7 +3906,6 @@ app.post(
     }
   })
 );
-
 
 //--------------end of companies profiles routes----------------
 //---DB check block

@@ -3811,6 +3811,7 @@ app.get(
 //---------------------------------------------------------------------------------
 
 // --- Create Company Profile (must be done before posting a job)
+// --- Create Company Profile (must be done before posting a job)
 app.post(
   "/companies",
   asyncHandler(async (req: Request, res: Response) => {
@@ -3820,15 +3821,13 @@ app.post(
       return res.status(400).json({ error: "Missing required fields" });
     }
 
-    // Get user ID from the frontend if it's available (this could come from local storage)
-    const userId = req.body.userId; // Get this from the frontend request body (ensure frontend sends this data)
+    const userId = req.body.userId; // Get user ID from the frontend request body
 
     if (!userId) {
       return res.status(400).json({ error: "User ID is required" });
     }
 
     try {
-      // Insert new company profile linked to user ID
       const result = await query(
         `INSERT INTO companies (user_id, name, description, location, industry, logo_url, created_at, updated_at)
          VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
@@ -3844,14 +3843,14 @@ app.post(
     }
   })
 );
+
 // GET route to fetch company details by companyId
 app.get(
   "/companies/:companyId",
   asyncHandler(async (req: Request, res: Response) => {
-    const { companyId } = req.params; // Get the companyId from the request URL
+    const { companyId } = req.params;
 
     try {
-      // Query to get the company details by companyId
       const result = await query(
         `SELECT id, name, description, location, industry, logo_url, created_at, updated_at
          FROM companies WHERE id = $1`,
@@ -3863,7 +3862,7 @@ app.get(
       }
 
       const company = result.rows[0];
-      res.status(200).json(company); // Return the company data to the frontend
+      res.status(200).json(company);
     } catch (error) {
       console.error("Error fetching company details:", error);
       res.status(500).json({ error: "Internal Server Error" });
@@ -3873,23 +3872,18 @@ app.get(
 
 
 // --- Post a Job by a company user (linked to a company)
-// --- Post a Job (linked to a company)
-// Create job posting for companies (authenticated users only)
-// Create job posting for companies (authenticated users only)
 app.post(
   "/companies/post-job",
   authenticateToken,
   asyncHandler(async (req: Request, res: Response) => {
-    // Check if req.user is defined
     if (!req.user) {
       return res.status(401).json({ error: "User not authenticated" });
     }
 
     const { title, description, category, location, requirements, apply_url, salary, is_active, expires_at, job_type, country, state, city } = req.body;
-
     const posted_by = req.user.userId;
-    
-    // Get the companyId and company name associated with the logged-in user
+
+    // Get the company ID and company name associated with the logged-in user
     const companyResult = await query(
       "SELECT company_id, name FROM companies WHERE user_id = $1",
       [posted_by]
@@ -3905,7 +3899,6 @@ app.post(
       return res.status(400).json({ error: "Invalid location value. Allowed: Remote, Onsite, Hybrid" });
     }
 
-    // Convert empty or whitespace-only expires_at to null
     const expiresAtValue = expires_at && expires_at.trim() !== "" ? expires_at : null;
 
     const result = await query(
@@ -3917,8 +3910,8 @@ app.post(
         title,
         description,
         category,
-        company_id,  // Insert company_id into company_id column in jobs table
-        companyName,  // Insert company name into company column in jobs table
+        company_id,
+        companyName,
         location,
         requirements,
         apply_url,
@@ -3943,14 +3936,12 @@ app.get(
   "/companies/jobs",
   authenticateToken,
   asyncHandler(async (req: Request, res: Response) => {
-    // Check if req.user is defined
     if (!req.user) {
       return res.status(401).json({ error: "User not authenticated" });
     }
 
     const userId = req.user.userId;
 
-    // Fetch the companyId associated with the user
     const companyResult = await query(
       "SELECT id AS company_id FROM companies WHERE user_id = $1",
       [userId]
@@ -3962,7 +3953,6 @@ app.get(
 
     const companyId = companyResult.rows[0].company_id;
 
-    // Fetch jobs associated with the user's company
     const result = await query(
       "SELECT * FROM jobs WHERE company_id = $1 ORDER BY posted_at DESC",
       [companyId]
@@ -3971,6 +3961,7 @@ app.get(
     res.json(result.rows);
   })
 );
+
 
 //--------------end of companies profiles routes----------------
 //---DB check block

@@ -3876,10 +3876,16 @@ app.get(
 
 
 // --- Post a Job (linked to a company)
+// --- Post a Job (linked to a company)
 app.post(
   "/jobs",
   authenticateToken,
   asyncHandler(async (req: Request, res: Response) => {
+    // Add CORS headers for this route only
+    res.setHeader("Access-Control-Allow-Origin", "https://www.ypropel.com");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+
     const {
       companyId, title, description, category, company, location, 
       requirements, applyUrl, salary, jobType, country, state, city, expiresAt
@@ -3923,7 +3929,6 @@ app.post(
     }
   })
 );
-
 
 
 

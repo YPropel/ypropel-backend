@@ -3926,6 +3926,35 @@ app.post(
     }
   })
 );
+
+// GET route to fetch the necessary data for posting a job
+app.get("/post-job", authenticateToken, asyncHandler(async (req, res) => {
+  const userId = req.user?.userId;
+  if (!userId) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  try {
+    // Fetch job categories (or any other necessary data)
+    const categoriesResult = await query("SELECT * FROM job_categories");
+    const categories = categoriesResult.rows;
+
+    // Fetch company details (if needed)
+    const companyResult = await query("SELECT * FROM companies WHERE user_id = $1", [userId]);
+    const companies = companyResult.rows;
+
+    // Additional data fetching (like countries, states, etc.) if needed
+    const countriesResult = await query("SELECT * FROM countries");
+    const countries = countriesResult.rows;
+
+    // Return the data to the frontend
+    res.json({ categories, companies, countries });
+  } catch (error) {
+    console.error("Error fetching data:", error);
+    res.status(500).json({ error: "Internal Server Error" });
+  }
+}));
+
 //--------------end of companies profiles routes----------------
 //---DB check block
 (async () => {

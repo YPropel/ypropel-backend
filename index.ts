@@ -3880,9 +3880,13 @@ app.post(
   "/jobs",
   authenticateToken,
   asyncHandler(async (req: Request, res: Response) => {
-    const { companyId, title, description, location, salary, jobType, applyUrl, expiresAt } = req.body;
+    const {
+      companyId, title, description, category, company, location, 
+      requirements, applyUrl, salary, jobType, country, state, city, expiresAt
+    } = req.body;
 
-    if (!companyId || !title || !description || !location || !salary || !jobType || !applyUrl) {
+    // Validate required fields
+    if (!companyId || !title || !description || !category || !company || !location || !salary || !jobType || !applyUrl || !country || !state || !city) {
       return res.status(400).json({ error: "Missing required fields" });
     }
 
@@ -3900,16 +3904,19 @@ app.post(
         return res.status(403).json({ error: "You can only post jobs for your own company" });
       }
 
-      // Insert new job post
+      // Insert new job post with all fields
       const result = await query(
-        `INSERT INTO jobs (company_id, title, description, location, salary, job_type, apply_url, expires_at, posted_by, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
-         RETURNING id, company_id, title, description, location, salary, job_type, apply_url, expires_at, posted_by`,
-        [companyId, title, description, location, salary, jobType, applyUrl, expiresAt, userId]
+        `INSERT INTO jobs (company_id, title, description, category, company, location, requirements, apply_url, salary, job_type, country, state, city, expires_at, posted_by, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW())
+         RETURNING id, company_id, title, description, category, company, location, requirements, apply_url, salary, job_type, country, state, city, expires_at, posted_by`,
+        [
+          companyId, title, description, category, company, location, 
+          requirements, applyUrl, salary, jobType, country, state, city, expiresAt, userId
+        ]
       );
 
       const job = result.rows[0];
-      res.status(201).json(job);
+      res.status(201).json(job); // Return the created job
     } catch (error) {
       console.error("Error posting job:", error);
       res.status(500).json({ error: "Internal Server Error" });

@@ -3874,83 +3874,101 @@ app.get(
 
 // --- Post a Job by a company user (linked to a company)
 // --- Post a Job (linked to a company)
+// Create job posting for companies (authenticated users only)
+// Create job posting for companies (authenticated users only)
 app.post(
-  "/post-job",
+  "/companies/post-job",
   authenticateToken,
   asyncHandler(async (req: Request, res: Response) => {
-   
-
-    const {
-      companyId, title, description, category, company, location, 
-      requirements, applyUrl, salary, jobType, country, state, city, expiresAt
-    } = req.body;
-
-    // Validate required fields
-    if (!companyId || !title || !description || !category || !company || !location || !salary || !jobType || !applyUrl || !country || !state || !city) {
-      return res.status(400).json({ error: "Missing required fields" });
+    // Check if req.user is defined
+    if (!req.user) {
+      return res.status(401).json({ error: "User not authenticated" });
     }
 
-    const userId = req.user?.userId;
-    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    const { title, description, category, location, requirements, apply_url, salary, is_active, expires_at, job_type, country, state, city } = req.body;
 
-    try {
-      // Check if the company exists and belongs to the user
-      const companyCheck = await query(
-        "SELECT * FROM companies WHERE id = $1 AND user_id = $2",
-        [companyId, userId]
-      );
+    const posted_by = req.user.userId;
+    
+    // Get the companyId associated with the logged-in user
+    const companyResult = await query(
+      "SELECT company_id FROM companies WHERE user_id = $1",
+      [posted_by]
+    );
 
-      if (companyCheck.rows.length === 0) {
-        return res.status(403).json({ error: "You can only post jobs for your own company" });
-      }
-
-      // Insert new job post with all fields
-      const result = await query(
-        `INSERT INTO jobs (company_id, title, description, category, company, location, requirements, apply_url, salary, job_type, country, state, city, expires_at, posted_by, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW())
-         RETURNING id, company_id, title, description, category, company, location, requirements, apply_url, salary, job_type, country, state, city, expires_at, posted_by`,
-        [
-          companyId, title, description, category, company, location, 
-          requirements, applyUrl, salary, jobType, country, state, city, expiresAt, userId
-        ]
-      );
-
-      const job = result.rows[0];
-      res.status(201).json(job); // Return the created job
-    } catch (error) {
-      console.error("Error posting job:", error);
-      res.status(500).json({ error: "Internal Server Error" });
+    if (companyResult.rows.length === 0) {
+      return res.status(400).json({ error: "User is not associated with a company." });
     }
+
+    const companyId = companyResult.rows[0].company_id;
+
+    if (location && !ALLOWED_LOCATIONS.includes(location)) {
+      return res.status(400).json({ error: "Invalid location value. Allowed: Remote, Onsite, Hybrid" });
+    }
+
+    // Convert empty or whitespace-only expires_at to null
+    const expiresAtValue = expires_at && expires_at.trim() !== "" ? expires_at : null;
+
+    const result = await query(
+      `INSERT INTO jobs
+        (title, description, category, company, location, requirements, apply_url, salary, posted_by, posted_at, is_active, expires_at, job_type, country, state, city)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,CURRENT_TIMESTAMP,$10,$11,$12,$13,$14)
+       RETURNING *`,
+      [
+        title,
+        description,
+        category,
+        companyId,  // Use companyId from the companies table
+        location,
+        requirements,
+        apply_url,
+        salary,
+        posted_by,
+        is_active ?? true,
+        expiresAtValue,
+        job_type || 'entry_level',
+        country,
+        state,
+        city,
+      ]
+    );
+
+    res.status(201).json(result.rows[0]);
   })
 );
 
-// GET route to fetch the necessary data for posting a job
-app.get("/post-job", authenticateToken, asyncHandler(async (req, res) => {
-  const userId = req.user?.userId;
-  if (!userId) {
-    return res.status(401).json({ error: "Unauthorized" });
-  }
+// Get all jobs posted by the company
+app.get(
+  "/companies/jobs",
+  authenticateToken,
+  asyncHandler(async (req: Request, res: Response) => {
+    // Check if req.user is defined
+    if (!req.user) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
 
-  try {
-    // Fetch job categories (or any other necessary data)
-    const categoriesResult = await query("SELECT * FROM job_categories");
-    const categories = categoriesResult.rows;
+    const userId = req.user.userId;
 
-    // Fetch company details (if needed)
-    const companyResult = await query("SELECT * FROM companies WHERE user_id = $1", [userId]);
-    const companies = companyResult.rows;
+    // Fetch the companyId associated with the user
+    const companyResult = await query(
+      "SELECT company_id FROM companies WHERE user_id = $1",
+      [userId]
+    );
 
-    // Additional data fetching (like countries, states, etc.) if needed
-    const countriesResult = await query("SELECT * FROM countries");
-    const countries = countriesResult.rows;
+    if (companyResult.rows.length === 0) {
+      return res.status(400).json({ error: "User is not associated with a company." });
+    }
 
-    // Return the data to the frontend
-    res.json({ categories, companies, countries });
-  } catch (error) {
-    console.error("Error fetching data:", error);
-    res.status(500).json({ error: "Internal Server Error" });
-  }
-}));
+    const companyId = companyResult.rows[0].company_id;
+
+    // Fetch jobs associated with the user's company
+    const result = await query(
+      "SELECT * FROM jobs WHERE company = $1 ORDER BY posted_at DESC",
+      [companyId]
+    );
+
+    res.json(result.rows);
+  })
+);
 
 //--------------end of companies profiles routes----------------
 //---DB check block

@@ -3803,17 +3803,14 @@ app.get(
     });
   })
 );
-
-
 //------------------------END of Admin BackEnd routes----------------------------
 
 
 
-//---------------Companies Profiles and adding jobs---------------------
-//----------------------------------------------------------------------
+//-------------------Companies Profiles and adding jobs---------------------------
+//---------------------------------------------------------------------------------
 
 // --- Create Company Profile (must be done before posting a job)
-// Create Company Profile (user identification without full authentication)
 app.post(
   "/companies",
   asyncHandler(async (req: Request, res: Response) => {
@@ -3878,35 +3875,57 @@ app.get(
 // --- Post a Job by a company user (linked to a company)
 // --- Post a Job (linked to a company)
 app.post(
-  "/companies",
+  "/post-job",
+  authenticateToken,
   asyncHandler(async (req: Request, res: Response) => {
-    // Destructure the request body
-    const { name, description, location, industry, logoUrl } = req.body;
+    // Add CORS headers for this route only
+    res.setHeader("Access-Control-Allow-Origin", "https://www.ypropel.com");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+
+    const {
+      companyId, title, description, category, company, location, 
+      requirements, applyUrl, salary, jobType, country, state, city, expiresAt
+    } = req.body;
 
     // Validate required fields
-    if (!name || !description || !location || !industry) {
+    if (!companyId || !title || !description || !category || !company || !location || !salary || !jobType || !applyUrl || !country || !state || !city) {
       return res.status(400).json({ error: "Missing required fields" });
     }
 
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+
     try {
-      // Insert new company profile (no user verification required here)
-      const result = await query(
-        `INSERT INTO companies (name, description, location, industry, logo_url, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
-         RETURNING *`, // Using RETURNING * to return the entire inserted row
-        [name, description, location, industry, logoUrl || null]
+      // Check if the company exists and belongs to the user
+      const companyCheck = await query(
+        "SELECT * FROM companies WHERE id = $1 AND user_id = $2",
+        [companyId, userId]
       );
 
-      // Send the inserted company details back as the response
-      const company = result.rows[0];
-      res.status(201).json(company);
+      if (companyCheck.rows.length === 0) {
+        return res.status(403).json({ error: "You can only post jobs for your own company" });
+      }
+
+      // Insert new job post with all fields
+      const result = await query(
+        `INSERT INTO jobs (company_id, title, description, category, company, location, requirements, apply_url, salary, job_type, country, state, city, expires_at, posted_by, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW())
+         RETURNING id, company_id, title, description, category, company, location, requirements, apply_url, salary, job_type, country, state, city, expires_at, posted_by`,
+        [
+          companyId, title, description, category, company, location, 
+          requirements, applyUrl, salary, jobType, country, state, city, expiresAt, userId
+        ]
+      );
+
+      const job = result.rows[0];
+      res.status(201).json(job); // Return the created job
     } catch (error) {
-      console.error("Error creating company profile:", error);
+      console.error("Error posting job:", error);
       res.status(500).json({ error: "Internal Server Error" });
     }
   })
 );
-
 //--------------end of companies profiles routes----------------
 //---DB check block
 (async () => {

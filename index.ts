@@ -3813,9 +3813,9 @@ app.get(
 //----------------------------------------------------------------------
 
 // --- Create Company Profile (must be done before posting a job)
+// Create Company Profile (user identification without full authentication)
 app.post(
   "/companies",
-  authenticateToken,
   asyncHandler(async (req: Request, res: Response) => {
     const { name, description, location, industry, logoUrl } = req.body;
 
@@ -3823,11 +3823,15 @@ app.post(
       return res.status(400).json({ error: "Missing required fields" });
     }
 
-    const userId = req.user?.userId;
-    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    // Get user ID from the frontend if it's available (this could come from local storage)
+    const userId = req.body.userId; // Get this from the frontend request body (ensure frontend sends this data)
+
+    if (!userId) {
+      return res.status(400).json({ error: "User ID is required" });
+    }
 
     try {
-      // Insert new company profile
+      // Insert new company profile linked to user ID
       const result = await query(
         `INSERT INTO companies (user_id, name, description, location, industry, logo_url, created_at, updated_at)
          VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
@@ -3843,6 +3847,7 @@ app.post(
     }
   })
 );
+
 // --- Post a Job (linked to a company)
 app.post(
   "/jobs",

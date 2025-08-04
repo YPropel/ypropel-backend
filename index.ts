@@ -3806,6 +3806,87 @@ app.get(
 
 
 //------------------------END of Admin BackEnd routes----------------------------
+
+
+
+//---------------Companies Profiles and adding jobs---------------------
+//----------------------------------------------------------------------
+
+// --- Create Company Profile (must be done before posting a job)
+app.post(
+  "/companies",
+  authenticateToken,
+  asyncHandler(async (req: Request, res: Response) => {
+    const { name, description, location, industry, logoUrl } = req.body;
+
+    if (!name || !description || !location || !industry) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+
+    try {
+      // Insert new company profile
+      const result = await query(
+        `INSERT INTO companies (user_id, name, description, location, industry, logo_url, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+         RETURNING id, name, description, location, industry, logo_url`,
+        [userId, name, description, location, industry, logoUrl || null]
+      );
+
+      const company = result.rows[0];
+      res.status(201).json(company);
+    } catch (error) {
+      console.error("Error creating company profile:", error);
+      res.status(500).json({ error: "Internal Server Error" });
+    }
+  })
+);
+// --- Post a Job (linked to a company)
+app.post(
+  "/jobs",
+  authenticateToken,
+  asyncHandler(async (req: Request, res: Response) => {
+    const { companyId, title, description, location, salary, jobType, applyUrl, expiresAt } = req.body;
+
+    if (!companyId || !title || !description || !location || !salary || !jobType || !applyUrl) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+
+    try {
+      // Check if the company exists and belongs to the user
+      const companyCheck = await query(
+        "SELECT * FROM companies WHERE id = $1 AND user_id = $2",
+        [companyId, userId]
+      );
+
+      if (companyCheck.rows.length === 0) {
+        return res.status(403).json({ error: "You can only post jobs for your own company" });
+      }
+
+      // Insert new job post
+      const result = await query(
+        `INSERT INTO jobs (company_id, title, description, location, salary, job_type, apply_url, expires_at, posted_by, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+         RETURNING id, company_id, title, description, location, salary, job_type, apply_url, expires_at, posted_by`,
+        [companyId, title, description, location, salary, jobType, applyUrl, expiresAt, userId]
+      );
+
+      const job = result.rows[0];
+      res.status(201).json(job);
+    } catch (error) {
+      console.error("Error posting job:", error);
+      res.status(500).json({ error: "Internal Server Error" });
+    }
+  })
+);
+
+
+//--------------end of companies profiles routes----------------
 //---DB check block
 (async () => {
   try {

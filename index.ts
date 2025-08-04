@@ -3875,57 +3875,44 @@ app.get(
 );
 
 
-// --- Post a Job (linked to a company)
+// --- Post a Job by a company user (linked to a company)
 // --- Post a Job (linked to a company)
 app.post(
-  "/post-job",
+  "/companies",
   authenticateToken,
   asyncHandler(async (req: Request, res: Response) => {
+    // Ensure the user is authenticated
+    const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
 
-    const {
-      companyId, title, description, category, company, location, 
-      requirements, applyUrl, salary, jobType, country, state, city, expiresAt
-    } = req.body;
+    // Destructure the request body
+    const { name, description, location, industry, logoUrl } = req.body;
 
     // Validate required fields
-    if (!companyId || !title || !description || !category || !company || !location || !salary || !jobType || !applyUrl || !country || !state || !city) {
+    if (!name || !description || !location || !industry) {
       return res.status(400).json({ error: "Missing required fields" });
     }
 
-    const userId = req.user?.userId;
-    if (!userId) return res.status(401).json({ error: "Unauthorized" });
-
     try {
-      // Check if the company exists and belongs to the user
-      const companyCheck = await query(
-        "SELECT * FROM companies WHERE id = $1 AND user_id = $2",
-        [companyId, userId]
-      );
-
-      if (companyCheck.rows.length === 0) {
-        return res.status(403).json({ error: "You can only post jobs for your own company" });
-      }
-
-      // Insert new job post with all fields
+      // Insert new company profile linked to user ID
       const result = await query(
-        `INSERT INTO jobs (company_id, title, description, category, company, location, requirements, apply_url, salary, job_type, country, state, city, expires_at, posted_by, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW())
-         RETURNING id, company_id, title, description, category, company, location, requirements, apply_url, salary, job_type, country, state, city, expires_at, posted_by`,
-        [
-          companyId, title, description, category, company, location, 
-          requirements, applyUrl, salary, jobType, country, state, city, expiresAt, userId
-        ]
+        `INSERT INTO companies (user_id, name, description, location, industry, logo_url, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+         RETURNING *`, // Using RETURNING * to return the entire inserted row
+        [userId, name, description, location, industry, logoUrl || null]
       );
 
-      const job = result.rows[0];
-      res.status(201).json(job); // Return the created job
+      // Send the inserted company details back as the response
+      const company = result.rows[0];
+      res.status(201).json(company);
     } catch (error) {
-      console.error("Error posting job:", error);
+      console.error("Error creating company profile:", error);
       res.status(500).json({ error: "Internal Server Error" });
     }
   })
 );
-
 
 
 //--------------end of companies profiles routes----------------

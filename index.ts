@@ -3889,9 +3889,9 @@ app.post(
 
     const posted_by = req.user.userId;
     
-    // Get the companyId associated with the logged-in user
+    // Get the companyId and company name associated with the logged-in user
     const companyResult = await query(
-      "SELECT company_id FROM companies WHERE user_id = $1",
+      "SELECT company_id, name FROM companies WHERE user_id = $1",
       [posted_by]
     );
 
@@ -3899,7 +3899,7 @@ app.post(
       return res.status(400).json({ error: "User is not associated with a company." });
     }
 
-    const companyId = companyResult.rows[0].company_id;
+    const { company_id, name: companyName } = companyResult.rows[0];
 
     if (location && !ALLOWED_LOCATIONS.includes(location)) {
       return res.status(400).json({ error: "Invalid location value. Allowed: Remote, Onsite, Hybrid" });
@@ -3910,14 +3910,15 @@ app.post(
 
     const result = await query(
       `INSERT INTO jobs
-        (title, description, category, company, location, requirements, apply_url, salary, posted_by, posted_at, is_active, expires_at, job_type, country, state, city)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,CURRENT_TIMESTAMP,$10,$11,$12,$13,$14)
+        (title, description, category, company_id, company, location, requirements, apply_url, salary, posted_by, posted_at, is_active, expires_at, job_type, country, state, city)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,CURRENT_TIMESTAMP,$11,$12,$13,$14,$15)
        RETURNING *`,
       [
         title,
         description,
         category,
-        companyId,  // Use companyId from the companies table
+        company_id,  // Insert company_id into company_id column in jobs table
+        companyName,  // Insert company name into company column in jobs table
         location,
         requirements,
         apply_url,
@@ -3936,6 +3937,7 @@ app.post(
   })
 );
 
+
 // Get all jobs posted by the company
 app.get(
   "/companies/jobs",
@@ -3950,7 +3952,7 @@ app.get(
 
     // Fetch the companyId associated with the user
     const companyResult = await query(
-      "SELECT company_id FROM companies WHERE user_id = $1",
+      "SELECT id AS company_id FROM companies WHERE user_id = $1",
       [userId]
     );
 
@@ -3962,7 +3964,7 @@ app.get(
 
     // Fetch jobs associated with the user's company
     const result = await query(
-      "SELECT * FROM jobs WHERE company = $1 ORDER BY posted_at DESC",
+      "SELECT * FROM jobs WHERE company_id = $1 ORDER BY posted_at DESC",
       [companyId]
     );
 

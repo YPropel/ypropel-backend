@@ -3910,12 +3910,8 @@ app.post(
     // Handle expiration date
     const expiresAtValue = expires_at && expires_at.trim() !== "" ? expires_at : null;
 
-const VALID_JOB_TYPES = ["internship", "entry_level", "hourly"];
-if (job_type && !VALID_JOB_TYPES.includes(job_type)) {
-  return res.status(400).json({ error: "Invalid job type. Allowed: internship, entry_level, hourly" });
-}
 
-
+    
     try {
      const result = await query(
           `INSERT INTO jobs

@@ -3948,7 +3948,7 @@ app.post(
 );
 
 
-// Get all jobs posted by the company
+// Get all jobs posted by the company and display it on the page for user (owner)
 app.get(
   "/companies/jobs",
   authenticateToken,
@@ -3970,6 +3970,48 @@ app.get(
     );
 
     res.json(result.rows);
+  })
+);
+// Delete a job posted by the company by user owner
+app.delete(
+  "/companies/jobs/:jobId",
+  authenticateToken,
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    const { jobId } = req.params;  // Get jobId from the request parameters
+
+    // Ensure the job belongs to the logged-in user's company
+    const companyResult = await query(
+      "SELECT company_id FROM jobs WHERE id = $1",
+      [jobId]
+    );
+
+    if (companyResult.rows.length === 0) {
+      return res.status(404).json({ error: "Job not found" });
+    }
+
+    const companyId = companyResult.rows[0].company_id;
+
+    // Ensure the user is authorized to delete the job
+    const userCompanyResult = await query(
+      "SELECT id AS company_id FROM companies WHERE user_id = $1",
+      [req.user.userId]
+    );
+
+    if (userCompanyResult.rows.length === 0 || userCompanyResult.rows[0].company_id !== companyId) {
+      return res.status(403).json({ error: "User is not authorized to delete this job" });
+    }
+
+    // Delete the job
+    await query(
+      "DELETE FROM jobs WHERE id = $1",
+      [jobId]
+    );
+
+    res.status(200).json({ message: "Job deleted successfully" });
   })
 );
 

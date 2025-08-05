@@ -3959,7 +3959,6 @@ app.post(
   })
 );
 
-
 // Get all jobs posted by the company
 app.get(
   "/companies/jobs",

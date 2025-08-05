@@ -3881,7 +3881,38 @@ app.post(
       return res.status(401).json({ error: "User not authenticated" });
     }
 
-    const { title, description, category, location, requirements, apply_url, salary, is_active, expires_at, job_type, country, state, city } = req.body;
+    const {
+      title,
+      description,
+      category,
+      location,
+      requirements,
+      apply_url,
+      salary,
+      is_active,
+      expires_at,
+      job_type,
+      country,
+      state,
+      city
+    } = req.body;
+
+    console.log("Received Job Data in Backend:", {
+      title,
+      description,
+      category,
+      location,
+      requirements,
+      apply_url,    // Should log apply_url
+      job_type,     // Should log job_type
+      salary,
+      is_active,
+      expires_at,
+      country,
+      state,
+      city
+    });
+
     const posted_by = req.user.userId; // This is the logged-in user
 
     // Validate required fields
@@ -3889,9 +3920,9 @@ app.post(
       return res.status(400).json({ error: "All required fields must be filled." });
     }
 
-    // Fetch company_id and company name from companies table using user_id (posted_by)
+    // Fetch company_id from the companies table using user_id (posted_by)
     const companyResult = await query(
-      "SELECT id, name FROM companies WHERE user_id = $1", // Fetching company ID and company name using user_id
+      "SELECT id, name FROM companies WHERE user_id = $1",
       [posted_by]
     );
 
@@ -3899,7 +3930,7 @@ app.post(
       return res.status(400).json({ error: "User is not associated with a company." });
     }
 
-    const { id: company_id, name: companyName } = companyResult.rows[0]; // Fetch company_id and company name
+    const { id: company_id, name: companyName } = companyResult.rows[0]; // Fetch company_id
 
     // Validate the location
     const ALLOWED_LOCATIONS = ["Remote", "Onsite", "Hybrid"];
@@ -3910,37 +3941,56 @@ app.post(
     // Handle expiration date
     const expiresAtValue = expires_at && expires_at.trim() !== "" ? expires_at : null;
 
-
-    
     try {
-     const result = await query(
-          `INSERT INTO jobs
-            (title, description, category, company_id, company, location, requirements, apply_url, salary, is_active, expires_at, job_type, country, state, city)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-          RETURNING *`,
-          [
-            title,
-            description,
-            category,
-            company_id,  // Using the company_id fetched from the companies table
-            companyName, // Insert the company name
-            location,
-            requirements,
-            apply_url,
-            salary,
-            is_active ?? true,
-            expiresAtValue,
-            job_type || 'entry_level',
-            country,
-            state,
-            city,
-          ]
-        );     
-         // Return the response with the job and companyId
+      // Log the values before inserting them into the database
+      console.log("Inserting job data into database:", {
+        title,
+        description,
+        category,
+        company_id,
+        companyName,
+        location,
+        requirements,
+        apply_url,    // Log apply_url before insert
+        salary,
+        is_active,
+        expiresAtValue,
+        job_type,     // Log job_type before insert
+        country,
+        state,
+        city
+      });
+
+      // Insert job into the database
+      const result = await query(
+        `INSERT INTO jobs
+          (title, description, category, company_id, company, location, requirements, apply_url, salary, is_active, expires_at, job_type, country, state, city)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+        RETURNING *`,
+        [
+          title,
+          description,
+          category,
+          company_id,
+          companyName,
+          location,
+          requirements,
+          apply_url,    // Ensure apply_url is inserted correctly
+          salary,
+          is_active ?? true,
+          expiresAtValue,
+          job_type || 'entry_level',  // Default to 'entry_level' if job_type is not provided
+          country,
+          state,
+          city
+        ]
+      );
+
+      // Send the job data back in the response
       res.status(201).json({
         success: true,
-        job: result.rows[0],
-        companyId: company_id,  // Send companyId back in the response
+        job: result.rows[0], // Return the inserted job data
+        companyId: company_id,
       });
     } catch (error) {
       console.error("Error creating job:", error);
@@ -3952,27 +4002,36 @@ app.post(
 
 // Get all jobs posted by the company and display it on the page for user (owner)
 app.get(
-  "/companies/:companyId/jobs",  // Use :companyId as a parameter in the route
+  "/companies/:companyId/jobs",  // Modify the route to use :companyId as a parameter
   authenticateToken,
   asyncHandler(async (req: Request, res: Response) => {
-    const { companyId } = req.params;  // Access companyId from route parameters
+    if (!req.user) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    const { companyId } = req.params; // Get companyId from route parameters
 
     if (!companyId) {
       return res.status(400).json({ error: "Company ID is required" });
     }
 
-    const parsedCompanyId = parseInt(companyId, 10);  // Parse companyId as an integer
+    // Parse companyId as an integer
+    const parsedCompanyId = parseInt(companyId, 10);  // Now using req.params.companyId
 
     if (isNaN(parsedCompanyId)) {
       return res.status(400).json({ error: "Invalid Company ID format" });
     }
 
+    // Log to check the received companyId
+    console.log("Received companyId:", parsedCompanyId);
+
+    // Fetch jobs for the given companyId
     const result = await query(
       "SELECT * FROM jobs WHERE company_id = $1 ORDER BY posted_at DESC",
-      [parsedCompanyId]
+      [parsedCompanyId] // Use parsed integer value
     );
 
-    res.json(result.rows);  // Send the jobs data
+    res.json(result.rows);
   })
 );
 

@@ -3950,36 +3950,27 @@ app.post(
 
 // Get all jobs posted by the company and display it on the page for user (owner)
 app.get(
-  "/companies/:companyId/jobs",  // Modify the route to use :companyId as a parameter
+  "/companies/:companyId/jobs",  // Use :companyId as a parameter in the route
   authenticateToken,
   asyncHandler(async (req: Request, res: Response) => {
-    if (!req.user) {
-      return res.status(401).json({ error: "User not authenticated" });
-    }
-
-    const { companyId } = req.params; // Get companyId from route parameters
+    const { companyId } = req.params;  // Access companyId from route parameters
 
     if (!companyId) {
       return res.status(400).json({ error: "Company ID is required" });
     }
 
-    // Parse companyId as an integer
-    const parsedCompanyId = parseInt(companyId, 10);  // Now using req.params.companyId
+    const parsedCompanyId = parseInt(companyId, 10);  // Parse companyId as an integer
 
     if (isNaN(parsedCompanyId)) {
       return res.status(400).json({ error: "Invalid Company ID format" });
     }
 
-    // Log to check the received companyId
-    console.log("Received companyId:", parsedCompanyId);
-
-    // Fetch jobs for the given companyId
     const result = await query(
       "SELECT * FROM jobs WHERE company_id = $1 ORDER BY posted_at DESC",
-      [parsedCompanyId] // Use parsed integer value
+      [parsedCompanyId]
     );
 
-    res.json(result.rows);
+    res.json(result.rows);  // Send the jobs data
   })
 );
 

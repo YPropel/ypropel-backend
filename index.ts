@@ -3930,7 +3930,7 @@ app.post(
           title,
           description,
           category,
-          company_id,
+          company_id,  // company_id is fetched from the database based on user_id
           companyName,
           location,
           requirements,
@@ -3946,8 +3946,12 @@ app.post(
         ]
       );
 
-      // Return the newly created job
-      res.status(201).json(result.rows[0]);
+      // Send the response with the job and companyId
+      res.status(201).json({
+        success: true,
+        job: result.rows[0],
+        companyId: company_id,  // Send companyId in the response
+      });
     } catch (error) {
       console.error("Error creating job:", error);
       res.status(500).json({ error: "Internal Server Error" });

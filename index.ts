@@ -3950,21 +3950,21 @@ app.post(
 
 // Get all jobs posted by the company and display it on the page for user (owner)
 app.get(
-  "/companies/jobs",
+  "/companies/:companyId/jobs",  // Modify the route to use :companyId as a parameter
   authenticateToken,
   asyncHandler(async (req: Request, res: Response) => {
     if (!req.user) {
       return res.status(401).json({ error: "User not authenticated" });
     }
 
-    const { companyId } = req.query; // Get companyId from query parameter
+    const { companyId } = req.params; // Get companyId from route parameters
 
     if (!companyId) {
       return res.status(400).json({ error: "Company ID is required" });
     }
 
     // Parse companyId as an integer
-    const parsedCompanyId = parseInt(companyId as string, 10);
+    const parsedCompanyId = parseInt(companyId, 10);  // Now using req.params.companyId
 
     if (isNaN(parsedCompanyId)) {
       return res.status(400).json({ error: "Invalid Company ID format" });

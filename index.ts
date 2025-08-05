@@ -3872,8 +3872,9 @@ app.get(
 
 
 // --- Post a Job by a company user (linked to a company)
+// --- Post a Job by a company user (linked to a company)
 app.post(
-  "/companies/post-job",
+  "/companies/post-job", // Endpoint for posting a job
   authenticateToken,
   asyncHandler(async (req: Request, res: Response) => {
     if (!req.user) {
@@ -3882,6 +3883,14 @@ app.post(
 
     const { title, description, category, location, requirements, apply_url, salary, is_active, expires_at, job_type, country, state, city } = req.body;
     const posted_by = req.user.userId;
+
+    // Log the received request body to check if all fields are coming through correctly
+    console.log("Received job data:", req.body);
+
+    // Validate required fields
+    if (!title || !description || !category || !location || !country || !state || !city) {
+      return res.status(400).json({ error: "All required fields must be filled." });
+    }
 
     // Get the company ID and company name associated with the logged-in user
     const companyResult = await query(
@@ -3895,38 +3904,54 @@ app.post(
 
     const { company_id, name: companyName } = companyResult.rows[0];
 
+    // Validate the location
+    const ALLOWED_LOCATIONS = ["Remote", "Onsite", "Hybrid"];
     if (location && !ALLOWED_LOCATIONS.includes(location)) {
       return res.status(400).json({ error: "Invalid location value. Allowed: Remote, Onsite, Hybrid" });
     }
 
+    // Handle expiration date
     const expiresAtValue = expires_at && expires_at.trim() !== "" ? expires_at : null;
 
-    const result = await query(
-      `INSERT INTO jobs
-        (title, description, category, company_id, company, location, requirements, apply_url, salary, posted_by, posted_at, is_active, expires_at, job_type, country, state, city)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,CURRENT_TIMESTAMP,$11,$12,$13,$14,$15)
-       RETURNING *`,
-      [
-        title,
-        description,
-        category,
-        company_id,
-        companyName,
-        location,
-        requirements,
-        apply_url,
-        salary,
-        posted_by,
-        is_active ?? true,
-        expiresAtValue,
-        job_type || 'entry_level',
-        country,
-        state,
-        city,
-      ]
-    );
+    // Log the query parameters to ensure the data is correct
+    console.log("Inserting job with params:", [
+      title, description, category, company_id, companyName, location,
+      requirements, apply_url, salary, posted_by, is_active, expiresAtValue,
+      job_type, country, state, city
+    ]);
 
-    res.status(201).json(result.rows[0]);
+    try {
+      const result = await query(
+        `INSERT INTO jobs
+          (title, description, category, company_id, company, location, requirements, apply_url, salary, posted_by, posted_at, is_active, expires_at, job_type, country, state, city)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,CURRENT_TIMESTAMP,$11,$12,$13,$14,$15)
+         RETURNING *`,
+        [
+          title,
+          description,
+          category,
+          company_id,
+          companyName,
+          location,
+          requirements,
+          apply_url,
+          salary,
+          posted_by,
+          is_active ?? true,
+          expiresAtValue,
+          job_type || 'entry_level',
+          country,
+          state,
+          city,
+        ]
+      );
+
+      // Return the newly created job
+      res.status(201).json(result.rows[0]);
+    } catch (error) {
+      console.error("Error creating job:", error);
+      res.status(500).json({ error: "Internal Server Error" });
+    }
   })
 );
 

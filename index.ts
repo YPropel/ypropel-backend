@@ -3904,19 +3904,21 @@ app.post(
       location,
       requirements,
       applyUrl,    // Should log apply_url
-      jobtype,     // Should log job_type
       salary,
-      is_active,
-      expires_at,
+      jobtype,     // Should log job_type
       country,
       state,
-      city
+      city,
+      expires_at,
+      is_active
+      
+      
     });
 
     const posted_by = req.user.userId; // This is the logged-in user
 
     // Validate required fields
-    if (!title || !description || !category || !location || !country || !state || !city) {
+    if (!title || !description || !category || !jobtype || !applyUrl || !location || !country || !state || !city) {
       return res.status(400).json({ error: "All required fields must be filled." });
     }
 
@@ -3943,7 +3945,7 @@ app.post(
 
     try {
       // Log the values before inserting them into the database
-      console.log("Inserting job data into database:", {
+      console.log("Inserting job data into database as:", {
         title,
         description,
         category,
@@ -3977,12 +3979,13 @@ app.post(
           requirements,
           applyUrl,    // Ensure apply_url is inserted correctly
           salary,
-          is_active ?? true,
-          expiresAtValue,
           jobtype || 'entry_level',  // Default to 'entry_level' if job_type is not provided
-          country,
+         country,
           state,
-          city
+          city,
+          expiresAtValue,
+          is_active ?? true,
+          
         ]
       );
 

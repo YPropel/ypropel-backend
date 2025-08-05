@@ -3975,7 +3975,7 @@ app.get(
 
     // Fetch jobs for the given companyId
     const result = await query(
-      "SELECT * FROM jobs WHERE company_id = $1 ORDER BY posted_at DESC",
+      "SELECT * FROM jobs ORDER BY posted_at DESC",
       [parsedCompanyId] // Use parsed integer value
     );
 

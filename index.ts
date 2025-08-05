@@ -3957,18 +3957,21 @@ app.get(
       return res.status(401).json({ error: "User not authenticated" });
     }
 
-    const { companyId } = req.query;
+    const { companyId } = req.query; // Get companyId from query parameter
 
     if (!companyId) {
       return res.status(400).json({ error: "Company ID is required" });
     }
 
-    // Ensure companyId is an integer
+    // Parse companyId as an integer
     const parsedCompanyId = parseInt(companyId as string, 10);
 
     if (isNaN(parsedCompanyId)) {
       return res.status(400).json({ error: "Invalid Company ID format" });
     }
+
+    // Log to check the received companyId
+    console.log("Received companyId:", parsedCompanyId);
 
     // Fetch jobs for the given companyId
     const result = await query(
@@ -3990,7 +3993,7 @@ app.delete(
 
     const { jobId } = req.params;  // Get jobId from the request parameters
 
-    console.log("Deleting job with ID:", jobId);  // Log the job ID for debugging
+    console.log("Deleting job with ID:", jobId);  // Log jobId for debugging
 
     // Ensure the job belongs to the logged-in user's company
     const companyResult = await query(
@@ -4004,7 +4007,7 @@ app.delete(
 
     const companyId = companyResult.rows[0].company_id;
 
-    console.log("Company ID associated with the job:", companyId); // Log the company ID
+    console.log("Company ID associated with the job:", companyId); // Log the companyId for debugging
 
     // Ensure the user is authorized to delete the job
     const userCompanyResult = await query(
@@ -4025,6 +4028,7 @@ app.delete(
     res.status(200).json({ message: "Job deleted successfully" });
   })
 );
+
 
 //--------------end of companies profiles routes----------------
 //---------------------------------------------------------------

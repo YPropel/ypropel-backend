@@ -3912,31 +3912,31 @@ app.post(
 
     try {
      const result = await query(
-        `INSERT INTO jobs
-          (title, description, category, company_id, company, location, requirements, apply_url, salary, is_active, expires_at, job_type, country, state, city)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, CURRENT_TIMESTAMP, $10, $11, $12, $13, $14)
-        RETURNING *`,
-        [
-          title,
-          description,
-          category,
-          company_id,  // Using the company_id fetched from the companies table
-          companyName, // Insert the company name
-          location,
-          requirements,
-          apply_url,
-          salary,
-         is_active === undefined ? true : is_active,
-          expiresAtValue,
-          job_type || 'entry_level',
-          country,
-          state,
-          city,
-        ]
-      );
-
-
-      // Return the response with the job and companyId
+          `INSERT INTO jobs
+            (title, description, category, company_id, company, location, requirements, apply_url, salary, is_active, expires_at, job_type, country, state, city)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+          RETURNING *`,
+          [
+            title,
+            description,
+            category,
+            company_id,  // Using the company_id fetched from the companies table
+            companyName, // Insert the company name
+            location,
+            requirements,
+            apply_url,
+            salary,
+            // Ensure `is_active` is explicitly passed as a boolean (true or false)
+            is_active === undefined ? true : is_active,  // Default to `true` if undefined
+            expiresAtValue,
+            job_type || 'entry_level',
+            country,
+            state,
+            city,
+          ]
+        );     
+        
+        // Return the response with the job and companyId
       res.status(201).json({
         success: true,
         job: result.rows[0],

@@ -3274,7 +3274,7 @@ app.post(
 
     const result = await query(
       `INSERT INTO jobs
-        (title, description, category, company, location, requirements, apply_url, salary, posted_at, is_active, expires_at, job_type, country, state, city)
+        (title, description, category, company, location, requirements, apply_url, salary, is_active, expires_at, job_type, country, state, city)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,CURRENT_TIMESTAMP,$10,$11,$12,$13,$14,$15)
        RETURNING *`,
       [

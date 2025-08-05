@@ -3887,11 +3887,11 @@ app.post(
       category,
       location,
       requirements,
-      apply_url,
+      applyUrl,
       salary,
       is_active,
       expires_at,
-      job_type,
+      jobtype,
       country,
       state,
       city
@@ -3903,8 +3903,8 @@ app.post(
       category,
       location,
       requirements,
-      apply_url,    // Should log apply_url
-      job_type,     // Should log job_type
+      applyUrl,    // Should log apply_url
+      jobtype,     // Should log job_type
       salary,
       is_active,
       expires_at,
@@ -3951,11 +3951,11 @@ app.post(
         companyName,
         location,
         requirements,
-        apply_url,    // Log apply_url before insert
+        applyUrl,    // Log apply_url before insert
         salary,
         is_active,
         expiresAtValue,
-        job_type,     // Log job_type before insert
+        jobtype,     // Log job_type before insert
         country,
         state,
         city
@@ -3975,11 +3975,11 @@ app.post(
           companyName,
           location,
           requirements,
-          apply_url,    // Ensure apply_url is inserted correctly
+          applyUrl,    // Ensure apply_url is inserted correctly
           salary,
           is_active ?? true,
           expiresAtValue,
-          job_type || 'entry_level',  // Default to 'entry_level' if job_type is not provided
+          jobtype || 'entry_level',  // Default to 'entry_level' if job_type is not provided
           country,
           state,
           city

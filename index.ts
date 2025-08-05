@@ -3980,8 +3980,54 @@ app.get(
   })
 );
 
+app.delete(
+  "/companies/jobs/:jobId",
+  authenticateToken,
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    const { jobId } = req.params;  // Get jobId from the request parameters
+
+    console.log("Deleting job with ID:", jobId);  // Log the job ID for debugging
+
+    // Ensure the job belongs to the logged-in user's company
+    const companyResult = await query(
+      "SELECT company_id FROM jobs WHERE id = $1",
+      [jobId]
+    );
+
+    if (companyResult.rows.length === 0) {
+      return res.status(404).json({ error: "Job not found" });
+    }
+
+    const companyId = companyResult.rows[0].company_id;
+
+    console.log("Company ID associated with the job:", companyId); // Log the company ID
+
+    // Ensure the user is authorized to delete the job
+    const userCompanyResult = await query(
+      "SELECT id AS company_id FROM companies WHERE user_id = $1",
+      [req.user.userId]
+    );
+
+    if (userCompanyResult.rows.length === 0 || userCompanyResult.rows[0].company_id !== companyId) {
+      return res.status(403).json({ error: "User is not authorized to delete this job" });
+    }
+
+    // Delete the job
+    await query(
+      "DELETE FROM jobs WHERE id = $1",
+      [jobId]
+    );
+
+    res.status(200).json({ message: "Job deleted successfully" });
+  })
+);
 
 //--------------end of companies profiles routes----------------
+//---------------------------------------------------------------
 //---DB check block
 (async () => {
   try {

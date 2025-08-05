@@ -3957,19 +3957,13 @@ app.get(
       return res.status(401).json({ error: "User not authenticated" });
     }
 
-    const userId = req.user.userId;
+    const { companyId } = req.query; // Get companyId from query parameter
 
-    const companyResult = await query(
-      "SELECT id AS company_id FROM companies WHERE user_id = $1",
-      [userId]
-    );
-
-    if (companyResult.rows.length === 0) {
-      return res.status(400).json({ error: "User is not associated with a company." });
+    if (!companyId) {
+      return res.status(400).json({ error: "Company ID is required" });
     }
 
-    const companyId = companyResult.rows[0].company_id;
-
+    // Fetch jobs for the given companyId
     const result = await query(
       "SELECT * FROM jobs WHERE company_id = $1 ORDER BY posted_at DESC",
       [companyId]

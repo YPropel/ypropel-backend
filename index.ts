@@ -3957,7 +3957,7 @@ app.get(
       return res.status(401).json({ error: "User not authenticated" });
     }
 
-    const { companyId } = req.query; // Get companyId from query parameter
+    const { companyId } = req.query;
 
     if (!companyId) {
       return res.status(400).json({ error: "Company ID is required" });
@@ -3973,7 +3973,7 @@ app.get(
     // Fetch jobs for the given companyId
     const result = await query(
       "SELECT * FROM jobs WHERE company_id = $1 ORDER BY posted_at DESC",
-      [parsedCompanyId]  // Use parsed integer value
+      [parsedCompanyId] // Use parsed integer value
     );
 
     res.json(result.rows);

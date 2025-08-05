@@ -3882,19 +3882,16 @@ app.post(
     }
 
     const { title, description, category, location, requirements, apply_url, salary, is_active, expires_at, job_type, country, state, city } = req.body;
-    const posted_by = req.user.userId;
-
-    // Log the received request body to check if all fields are coming through correctly
-    console.log("Received job data:", req.body);
+    const posted_by = req.user.userId; // This is the logged-in user
 
     // Validate required fields
     if (!title || !description || !category || !location || !country || !state || !city) {
       return res.status(400).json({ error: "All required fields must be filled." });
     }
 
-    // Get the company ID and company name associated with the logged-in user
+    // Fetch company_id from companies table using user_id (posted_by)
     const companyResult = await query(
-      "SELECT company_id, name FROM companies WHERE user_id = $1",
+      "SELECT id FROM companies WHERE user_id = $1", // Fetching company ID using user_id
       [posted_by]
     );
 
@@ -3902,7 +3899,7 @@ app.post(
       return res.status(400).json({ error: "User is not associated with a company." });
     }
 
-    const { company_id, name: companyName } = companyResult.rows[0];
+    const company_id = companyResult.rows[0].id; // company_id fetched from the companies table
 
     // Validate the location
     const ALLOWED_LOCATIONS = ["Remote", "Onsite", "Hybrid"];
@@ -3913,25 +3910,17 @@ app.post(
     // Handle expiration date
     const expiresAtValue = expires_at && expires_at.trim() !== "" ? expires_at : null;
 
-    // Log the query parameters to ensure the data is correct
-    console.log("Inserting job with params:", [
-      title, description, category, company_id, companyName, location,
-      requirements, apply_url, salary, posted_by, is_active, expiresAtValue,
-      job_type, country, state, city
-    ]);
-
     try {
       const result = await query(
         `INSERT INTO jobs
-          (title, description, category, company_id, company, location, requirements, apply_url, salary, posted_by, posted_at, is_active, expires_at, job_type, country, state, city)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,CURRENT_TIMESTAMP,$11,$12,$13,$14,$15)
+          (title, description, category, company_id, location, requirements, apply_url, salary, posted_by, posted_at, is_active, expires_at, job_type, country, state, city)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,CURRENT_TIMESTAMP,$10,$11,$12,$13,$14)
          RETURNING *`,
         [
           title,
           description,
           category,
-          company_id,  // company_id is fetched from the database based on user_id
-          companyName,
+          company_id,  // Using the company_id fetched from the companies table
           location,
           requirements,
           apply_url,
@@ -3946,11 +3935,11 @@ app.post(
         ]
       );
 
-      // Send the response with the job and companyId
+      // Return the response with the job and companyId
       res.status(201).json({
         success: true,
         job: result.rows[0],
-        companyId: company_id,  // Send companyId in the response
+        companyId: company_id,  // Send companyId back in the response
       });
     } catch (error) {
       console.error("Error creating job:", error);
@@ -3958,6 +3947,7 @@ app.post(
     }
   })
 );
+
 
 // Get all jobs posted by the company
 app.get(

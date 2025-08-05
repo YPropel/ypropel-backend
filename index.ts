@@ -3274,7 +3274,7 @@ app.post(
 
     const result = await query(
       `INSERT INTO jobs
-        (title, description, category, company, location, requirements, apply_url, salary, posted_by, posted_at, is_active, expires_at, job_type, country, state, city)
+        (title, description, category, company, location, requirements, apply_url, salary, posted_at, is_active, expires_at, job_type, country, state, city)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,CURRENT_TIMESTAMP,$10,$11,$12,$13,$14,$15)
        RETURNING *`,
       [
@@ -3286,7 +3286,6 @@ app.post(
         requirements,
         apply_url,
         salary,
-        posted_by,
         is_active ?? true,
         expiresAtValue,
         job_type || 'entry_level',
@@ -3926,8 +3925,7 @@ app.post(
             requirements,
             apply_url,
             salary,
-            // Ensure `is_active` is explicitly passed as a boolean (true or false)
-            is_active === undefined ? true : is_active,  // Default to `true` if undefined
+            is_active ?? true,
             expiresAtValue,
             job_type || 'entry_level',
             country,
@@ -3935,8 +3933,7 @@ app.post(
             city,
           ]
         );     
-        
-        // Return the response with the job and companyId
+         // Return the response with the job and companyId
       res.status(201).json({
         success: true,
         job: result.rows[0],

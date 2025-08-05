@@ -3953,31 +3953,20 @@ app.get(
   "/companies/jobs",
   authenticateToken,
   asyncHandler(async (req: Request, res: Response) => {
-    if (!req.user) {
-      return res.status(401).json({ error: "User not authenticated" });
-    }
+    console.log("Backend: Fetching jobs for company...");
 
-    const { companyId } = req.query; // Get companyId from query parameter
+    const { companyId } = req.query;
+    console.log("Backend: Company ID:", companyId);
 
     if (!companyId) {
       return res.status(400).json({ error: "Company ID is required" });
     }
 
-    // Parse companyId as an integer
-    const parsedCompanyId = parseInt(companyId as string, 10);
-
-    if (isNaN(parsedCompanyId)) {
-      return res.status(400).json({ error: "Invalid Company ID format" });
-    }
-
-    // Log to check the received companyId
-    console.log("Received companyId:", parsedCompanyId);
-
-    // Fetch jobs for the given companyId
     const result = await query(
-      "SELECT * FROM jobs ORDER BY posted_at DESC",
-      [parsedCompanyId] // Use parsed integer value
+      "SELECT * FROM jobs WHERE company_id = $1 ORDER BY posted_at DESC",
+      [companyId]
     );
+    console.log("Backend: Jobs fetched:", result.rows);  // Log the result rows
 
     res.json(result.rows);
   })

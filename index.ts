@@ -3972,6 +3972,7 @@ app.get(
   })
 );
 
+
 app.delete(
   "/companies/jobs/:jobId",
   authenticateToken,

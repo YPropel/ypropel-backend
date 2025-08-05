@@ -3889,9 +3889,9 @@ app.post(
       return res.status(400).json({ error: "All required fields must be filled." });
     }
 
-    // Fetch company_id from companies table using user_id (posted_by)
+    // Fetch company_id and company name from companies table using user_id (posted_by)
     const companyResult = await query(
-      "SELECT id FROM companies WHERE user_id = $1", // Fetching company ID using user_id
+      "SELECT id, name FROM companies WHERE user_id = $1", // Fetching company ID and company name using user_id
       [posted_by]
     );
 
@@ -3899,7 +3899,7 @@ app.post(
       return res.status(400).json({ error: "User is not associated with a company." });
     }
 
-    const company_id = companyResult.rows[0].id; // company_id fetched from the companies table
+    const { id: company_id, name: companyName } = companyResult.rows[0]; // Fetch company_id and company name
 
     // Validate the location
     const ALLOWED_LOCATIONS = ["Remote", "Onsite", "Hybrid"];
@@ -3913,14 +3913,15 @@ app.post(
     try {
       const result = await query(
         `INSERT INTO jobs
-          (title, description, category, company_id, location, requirements, apply_url, salary, posted_by, posted_at, is_active, expires_at, job_type, country, state, city)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,CURRENT_TIMESTAMP,$10,$11,$12,$13,$14)
+          (title, description, category, company_id, company, location, requirements, apply_url, salary, posted_by, posted_at, is_active, expires_at, job_type, country, state, city)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, CURRENT_TIMESTAMP, $11, $12, $13, $14, $15)
          RETURNING *`,
         [
           title,
           description,
           category,
           company_id,  // Using the company_id fetched from the companies table
+          companyName, // Insert the company name
           location,
           requirements,
           apply_url,

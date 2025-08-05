@@ -3926,7 +3926,7 @@ app.post(
           requirements,
           apply_url,
           salary,
-          is_active ?? true,
+         is_active === undefined ? true : is_active,
           expiresAtValue,
           job_type || 'entry_level',
           country,

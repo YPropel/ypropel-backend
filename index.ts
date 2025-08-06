@@ -3846,6 +3846,7 @@ app.get(
 
 // --- Create Company Profile (must be done before posting a job)
 // --- Create or Update Company Profile (handle both scenarios)
+// --- Create Company Profile (must be done before posting a job)
 app.post(
   "/companies",
   asyncHandler(async (req: Request, res: Response) => {
@@ -3861,51 +3862,32 @@ app.post(
 
     // Check if the user already has a company
     const existingCompany = await query(
-      "SELECT id, name, description, location, industry, logo_url FROM companies WHERE user_id = $1",
+      "SELECT id FROM companies WHERE user_id = $1", 
       [userId]
     );
 
     if (existingCompany.rows.length > 0) {
-      // If the user already has a company, return the existing company info for updating
-      const company = existingCompany.rows[0];
+      return res.status(400).json({ error: "You already have a company profile." });
+    }
 
-      // Optionally, allow updating the existing company instead of creating a new one
-      const updatedResult = await query(
-        `UPDATE companies
-         SET name = $2, description = $3, location = $4, industry = $5, logo_url = $6, updated_at = NOW()
-         WHERE id = $1
+    // Create a new company if no existing company is found
+    try {
+      const result = await query(
+        `INSERT INTO companies (user_id, name, description, location, industry, logo_url, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
          RETURNING id, name, description, location, industry, logo_url`,
-        [
-          company.id, // The existing company ID
-          name,
-          description,
-          location,
-          industry,
-          logoUrl || null, // If logoUrl is not provided, set it to null
-        ]
+        [userId, name, description, location, industry, logoUrl || null]
       );
 
-      const updatedCompany = updatedResult.rows[0];
-      res.status(200).json(updatedCompany); // Return the updated company info
-    } else {
-      // If the user doesn't have a company, create a new one
-      try {
-        const result = await query(
-          `INSERT INTO companies (user_id, name, description, location, industry, logo_url, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
-           RETURNING id, name, description, location, industry, logo_url`,
-          [userId, name, description, location, industry, logoUrl || null]
-        );
-
-        const company = result.rows[0];
-        res.status(201).json(company); // Return the newly created company
-      } catch (error) {
-        console.error("Error creating company profile:", error);
-        res.status(500).json({ error: "Internal Server Error" });
-      }
+      const company = result.rows[0];
+      res.status(201).json(company);
+    } catch (error) {
+      console.error("Error creating company profile:", error);
+      res.status(500).json({ error: "Internal Server Error" });
     }
   })
 );
+
 
 // GET route to fetch company details by companyId
 app.get(

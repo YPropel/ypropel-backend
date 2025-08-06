@@ -3889,12 +3889,13 @@ app.post(
       requirements,
       applyUrl,
       salary,
-      is_active,
-      expires_at,
       jobtype,
       country,
       state,
-      city
+      city,
+      expires_at,
+      is_active
+      
     } = req.body;
 
     console.log("Received Job Data in Backend:", {
@@ -3955,18 +3956,19 @@ app.post(
         requirements,
         applyUrl,    // Log apply_url before insert
         salary,
-        is_active,
-        expiresAtValue,
         jobtype,     // Log job_type before insert
         country,
         state,
-        city
+        city,
+        expiresAtValue,
+        is_active
+        
       });
 
       // Insert job into the database
       const result = await query(
         `INSERT INTO jobs
-          (title, description, category, company_id, company, location, requirements, apply_url, salary, is_active, expires_at, job_type, country, state, city)
+          (title, description, category, company_id, company, location, requirements, apply_url, salary, job_type, country, state, city, expires_at, is_active)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
         RETURNING *`,
         [

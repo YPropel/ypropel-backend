@@ -3812,7 +3812,7 @@ app.get(
 
 // --- Create Company Profile (must be done before posting a job)
 // --- Create Company Profile (must be done before posting a job)
-app.post(
+/*app.post(
   "/companies",
   asyncHandler(async (req: Request, res: Response) => {
     const { name, description, location, industry, logoUrl } = req.body;
@@ -3842,7 +3842,49 @@ app.post(
       res.status(500).json({ error: "Internal Server Error" });
     }
   })
+); */
+
+// --- Create Company Profile (must be done before posting a job)
+app.post(
+  "/companies",
+  asyncHandler(async (req: Request, res: Response) => {
+    const { name, description, location, industry, logoUrl, userId } = req.body;
+
+    if (!name || !description || !location || !industry) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+
+    if (!userId) {
+      return res.status(400).json({ error: "User ID is required" });
+    }
+
+    // Check if the user already has a company
+    const existingCompany = await query(
+      "SELECT id FROM companies WHERE user_id = $1",
+      [userId]
+    );
+
+    if (existingCompany.rows.length > 0) {
+      return res.status(400).json({ error: "You already have a company profile." });
+    }
+
+    try {
+      const result = await query(
+        `INSERT INTO companies (user_id, name, description, location, industry, logo_url, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+         RETURNING id, name, description, location, industry, logo_url`,
+        [userId, name, description, location, industry, logoUrl || null]
+      );
+
+      const company = result.rows[0];
+      res.status(201).json(company);
+    } catch (error) {
+      console.error("Error creating company profile:", error);
+      res.status(500).json({ error: "Internal Server Error" });
+    }
+  })
 );
+
 
 // GET route to fetch company details by companyId
 app.get(
@@ -3868,7 +3910,7 @@ app.get(
       res.status(500).json({ error: "Internal Server Error" });
     }
   })
-);
+); 
 
 
 // --- Post a Job by a company user (linked to a company)
@@ -3912,7 +3954,6 @@ app.post(
       city,
       expiresAt,
   isActive,
-      
       
     });
 

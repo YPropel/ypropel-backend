@@ -3889,12 +3889,12 @@ app.post(
       requirements,
       applyUrl,
       salary,
-      jobtype,
+      jobType,
       country,
       state,
       city,
-      expires_at,
-      is_active
+      expiresAt,
+  isActive,
       
     } = req.body;
 
@@ -3906,12 +3906,12 @@ app.post(
       requirements,
       applyUrl,    // Should log apply_url
       salary,
-      jobtype,     // Should log job_type
+      jobType,     // Should log job_type
       country,
       state,
       city,
-      expires_at,
-      is_active
+      expiresAt,
+  isActive,
       
       
     });
@@ -3919,7 +3919,7 @@ app.post(
     const posted_by = req.user.userId; // This is the logged-in user
 
     // Validate required fields
-    if (!title || !description || !category || !jobtype || !applyUrl || !location || !country || !state || !city) {
+    if (!title || !description || !category || !jobType || !applyUrl || !location || !country || !state || !city) {
       return res.status(400).json({ error: "in index All required fields must be filled." });
     }
 
@@ -3942,7 +3942,7 @@ app.post(
     }
 
     // Handle expiration date
-    const expiresAtValue = expires_at && expires_at.trim() !== "" ? expires_at : null;
+    const expiresAtValue = expiresAt && expiresAt.trim() !== "" ? expiresAt : null;
 
     try {
       // Log the values before inserting them into the database
@@ -3956,12 +3956,12 @@ app.post(
         requirements,
         applyUrl,    // Log apply_url before insert
         salary,
-        jobtype,     // Log job_type before insert
+        jobType,     // Log job_type before insert
         country,
         state,
         city,
         expiresAtValue,
-        is_active
+        isActive
         
       });
 
@@ -3981,12 +3981,12 @@ app.post(
           requirements,
           applyUrl,    // Ensure apply_url is inserted correctly
           salary,
-          jobtype || 'entry_level',  // Default to 'entry_level' if job_type is not provided
+          jobType || 'entry_level',  // Default to 'entry_level' if job_type is not provided
          country,
           state,
           city,
           expiresAtValue,
-          is_active ?? true,
+          isActive ?? true,
           
         ]
       );

@@ -3849,9 +3849,10 @@ app.get(
 // --- Create Company Profile (must be done before posting a job)
 app.post(
   "/companies",
+  upload.single("logo"), // Assuming you are using multer with the name 'logo' for the file input
   asyncHandler(async (req: Request, res: Response) => {
-    const { name, description, location, industry, logoUrl, userId } = req.body;
-
+    const { name, description, location, industry, userId } = req.body;
+    
     if (!name || !description || !location || !industry) {
       return res.status(400).json({ error: "Missing required fields" });
     }
@@ -3870,13 +3871,35 @@ app.post(
       return res.status(400).json({ error: "You already have a company profile." });
     }
 
+    let logoUrl = null;
+    
+    // Handle file upload
+    if (req.file) {
+      try {
+        // Use your file upload service here (e.g., Cloudinary, AWS S3, etc.)
+        const uploadResult = await uploadLogoToCloud(req.file); // Assuming this function uploads to Cloudinary or similar
+        
+        // Get the URL after successful upload (Cloudinary returns a URL)
+        logoUrl = uploadResult.secure_url; // Cloudinary's response
+      } catch (error) {
+        return res.status(500).json({ error: "Error uploading logo" });
+      }
+    }
+
     // Create a new company if no existing company is found
     try {
       const result = await query(
         `INSERT INTO companies (user_id, name, description, location, industry, logo_url, created_at, updated_at)
          VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
          RETURNING id, name, description, location, industry, logo_url`,
-        [userId, name, description, location, industry, logoUrl || null]
+        [
+          userId,
+          name,
+          description,
+          location,
+          industry,
+          logoUrl || null // Use the logoUrl obtained from the upload
+        ]
       );
 
       const company = result.rows[0];
@@ -3887,6 +3910,7 @@ app.post(
     }
   })
 );
+
 
 
 // GET route to fetch company details by companyId

@@ -4016,7 +4016,7 @@ app.post(
     );
 
     if (existingJob.rows.length > 0) {
-      return res.status(400).json({ error: "You already have an active job posting. Please wait until it expires." });
+      return res.status(400).json({ error: "You already have an active free job posting. Please wait until it expires or switch to paid posting." });
     }
 
     // Set expiration to 3 days from now

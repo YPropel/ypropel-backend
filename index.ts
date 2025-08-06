@@ -4177,6 +4177,22 @@ app.delete(
   })
 );
 
+//------Route to display all companies profiles to users (public)
+
+app.get(
+  "/companies",
+  asyncHandler(async (req: Request, res: Response) => {
+    try {
+      const result = await query(
+        `SELECT id, name, industry, location, description, logo_url FROM companies ORDER BY created_at DESC`
+      );
+      res.status(200).json(result.rows);
+    } catch (error) {
+      console.error("Error fetching companies:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  })
+);
 
 //--------------end of companies profiles routes----------------
 //---------------------------------------------------------------

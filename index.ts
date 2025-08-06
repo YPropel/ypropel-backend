@@ -3823,42 +3823,6 @@ app.get(
 //---------------------------------------------------------------------------------
 
 // --- Create Company Profile (must be done before posting a job)
-// --- Create Company Profile (must be done before posting a job)
-/*app.post(
-  "/companies",
-  asyncHandler(async (req: Request, res: Response) => {
-    const { name, description, location, industry, logoUrl } = req.body;
-
-    if (!name || !description || !location || !industry) {
-      return res.status(400).json({ error: "Missing required fields" });
-    }
-
-    const userId = req.body.userId; // Get user ID from the frontend request body
-
-    if (!userId) {
-      return res.status(400).json({ error: "User ID is required" });
-    }
-
-    try {
-      const result = await query(
-        `INSERT INTO companies (user_id, name, description, location, industry, logo_url, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
-         RETURNING id, name, description, location, industry, logo_url`,
-        [userId, name, description, location, industry, logoUrl || null]
-      );
-
-      const company = result.rows[0];
-      res.status(201).json(company);
-    } catch (error) {
-      console.error("Error creating company profile:", error);
-      res.status(500).json({ error: "Internal Server Error" });
-    }
-  })
-); */
-
-// --- Create Company Profile (must be done before posting a job)
-// --- Create or Update Company Profile (handle both scenarios)
-// --- Create Company Profile (must be done before posting a job)
 app.post(
   "/companies",
   uploadCompanyLogo.single("logo"), // Attach the logo upload middleware
@@ -3965,7 +3929,7 @@ app.delete(
 
 // --- Post a Job by a company user (linked to a company)
 // --- Post a Job by a company user (linked to a company)
-app.post(
+/*app.post(
   "/companies/post-job",
   authenticateToken,
   asyncHandler(async (req: Request, res: Response) => {
@@ -4086,7 +4050,111 @@ app.get(
 
     res.json(result.rows);
   })
+); */
+app.post(
+  "/companies/post-job",
+  authenticateToken,
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    const {
+      title,
+      description,
+      category,
+      location,
+      requirements,
+      applyUrl,
+      salary,
+      jobType,
+      country,
+      state,
+      city,
+      planType, // 'free', 'pay_per_post', or 'subscription'
+    } = req.body;
+
+    const posted_by = req.user.userId;
+
+    if (!title || !description || !category || !jobType || !applyUrl || !location || !country || !state || !city || !planType) {
+      return res.status(400).json({ error: "All required fields must be filled." });
+    }
+
+    const ALLOWED_PLANS = ["free", "pay_per_post", "subscription"];
+    if (!ALLOWED_PLANS.includes(planType)) {
+      return res.status(400).json({ error: "Invalid plan type." });
+    }
+
+    // Validate location
+    const ALLOWED_LOCATIONS = ["Remote", "Onsite", "Hybrid"];
+    if (!ALLOWED_LOCATIONS.includes(location)) {
+      return res.status(400).json({ error: "Invalid location value. Allowed: Remote, Onsite, Hybrid" });
+    }
+
+    const companyResult = await query("SELECT id, name FROM companies WHERE user_id = $1", [posted_by]);
+    if (companyResult.rows.length === 0) {
+      return res.status(400).json({ error: "User is not associated with a company." });
+    }
+
+    const { id: company_id, name: companyName } = companyResult.rows[0];
+
+    // Restrict free plan to only one active job
+    if (planType === "free") {
+      const existingJob = await query(
+        "SELECT id FROM jobs WHERE company_id = $1 AND is_active = true",
+        [company_id]
+      );
+      if (existingJob.rows.length > 0) {
+        return res.status(400).json({ error: "You already have an active job post under the free plan." });
+      }
+    }
+
+    // Set expiration based on plan type
+    let expiresAt: Date;
+    const now = new Date();
+    if (planType === "free") {
+      expiresAt = new Date(now.getTime() + 2 * 24 * 60 * 60 * 1000); // 2 days
+    } else {
+      expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000); // 30 days
+    }
+
+    try {
+      const result = await query(
+        `INSERT INTO jobs
+          (title, description, category, company_id, company, location, requirements, apply_url, salary, job_type, country, state, city, expires_at, is_active, plan_type)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, true, $15)
+         RETURNING *`,
+        [
+          title,
+          description,
+          category,
+          company_id,
+          companyName,
+          location,
+          requirements,
+          applyUrl,
+          salary,
+          jobType,
+          country,
+          state,
+          city,
+          expiresAt,
+          planType,
+        ]
+      );
+
+      res.status(201).json({
+        success: true,
+        job: result.rows[0],
+        companyId: company_id,
+      });
+    } catch (error) {
+      console.error("Error creating job:", error);
+      res.status(500).json({ error: "Internal Server Error" });
+    }
+  })
 );
+
 
 app.delete(
   "/companies/jobs/:jobId",

@@ -3920,7 +3920,7 @@ app.post(
 
     // Validate required fields
     if (!title || !description || !category || !jobtype || !applyUrl || !location || !country || !state || !city) {
-      return res.status(400).json({ error: "All required fields must be filled." });
+      return res.status(400).json({ error: "in index All required fields must be filled." });
     }
 
     // Fetch company_id from the companies table using user_id (posted_by)

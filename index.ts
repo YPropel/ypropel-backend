@@ -3966,7 +3966,7 @@ app.delete(
 // --- Post a Job by a company user (linked to a company)
 // --- Post a Job by a company user (linked to a company)
 app.post(
-  "/companies/post-job", // Endpoint for posting a job
+  "/companies/post-job",
   authenticateToken,
   asyncHandler(async (req: Request, res: Response) => {
     if (!req.user) {
@@ -3985,36 +3985,14 @@ app.post(
       country,
       state,
       city,
-      expiresAt,
-  isActive,
-      
     } = req.body;
 
-    console.log("Received Job Data in Backend:", {
-      title,
-      description,
-      category,
-      location,
-      requirements,
-      applyUrl,    // Should log apply_url
-      salary,
-      jobType,     // Should log job_type
-      country,
-      state,
-      city,
-      expiresAt,
-  isActive,
-      
-    });
+    const posted_by = req.user.userId;
 
-    const posted_by = req.user.userId; // This is the logged-in user
-
-    // Validate required fields
     if (!title || !description || !category || !jobType || !applyUrl || !location || !country || !state || !city) {
-      return res.status(400).json({ error: "in index All required fields must be filled." });
+      return res.status(400).json({ error: "All required fields must be filled." });
     }
 
-    // Fetch company_id from the companies table using user_id (posted_by)
     const companyResult = await query(
       "SELECT id, name FROM companies WHERE user_id = $1",
       [posted_by]
@@ -4024,20 +4002,32 @@ app.post(
       return res.status(400).json({ error: "User is not associated with a company." });
     }
 
-    const { id: company_id, name: companyName } = companyResult.rows[0]; // Fetch company_id
+    const { id: company_id, name: companyName } = companyResult.rows[0];
 
-    // Validate the location
     const ALLOWED_LOCATIONS = ["Remote", "Onsite", "Hybrid"];
-    if (location && !ALLOWED_LOCATIONS.includes(location)) {
+    if (!ALLOWED_LOCATIONS.includes(location)) {
       return res.status(400).json({ error: "Invalid location value. Allowed: Remote, Onsite, Hybrid" });
     }
 
-    // Handle expiration date
-    const expiresAtValue = expiresAt && expiresAt.trim() !== "" ? expiresAt : null;
+    // Check if the company already has an active job
+    const existingJob = await query(
+      "SELECT id FROM jobs WHERE company_id = $1 AND is_active = true AND expires_at > NOW()",
+      [company_id]
+    );
 
-    try {
-      // Log the values before inserting them into the database
-      console.log("Inserting job data into database as:", {
+    if (existingJob.rows.length > 0) {
+      return res.status(400).json({ error: "You already have an active job posting. Please wait until it expires." });
+    }
+
+    // Set expiration to 3 days from now
+    const expiresAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
+
+    const result = await query(
+      `INSERT INTO jobs
+        (title, description, category, company_id, company, location, requirements, apply_url, salary, job_type, country, state, city, expires_at, is_active)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, true)
+      RETURNING *`,
+      [
         title,
         description,
         category,
@@ -4045,56 +4035,23 @@ app.post(
         companyName,
         location,
         requirements,
-        applyUrl,    // Log apply_url before insert
+        applyUrl,
         salary,
-        jobType,     // Log job_type before insert
+        jobType,
         country,
         state,
         city,
-        expiresAtValue,
-        isActive
-        
-      });
+        expiresAt,
+      ]
+    );
 
-      // Insert job into the database
-      const result = await query(
-        `INSERT INTO jobs
-          (title, description, category, company_id, company, location, requirements, apply_url, salary, job_type, country, state, city, expires_at, is_active)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-        RETURNING *`,
-        [
-          title,
-          description,
-          category,
-          company_id,
-          companyName,
-          location,
-          requirements,
-          applyUrl,    // Ensure apply_url is inserted correctly
-          salary,
-          jobType || 'entry_level',  // Default to 'entry_level' if job_type is not provided
-         country,
-          state,
-          city,
-          expiresAtValue,
-          isActive ?? true,
-          
-        ]
-      );
-
-      // Send the job data back in the response
-      res.status(201).json({
-        success: true,
-        job: result.rows[0], // Return the inserted job data
-        companyId: company_id,
-      });
-    } catch (error) {
-      console.error("Error creating job:", error);
-      res.status(500).json({ error: "Internal Server Error" });
-    }
+    res.status(201).json({
+      success: true,
+      job: result.rows[0],
+      companyId: company_id,
+    });
   })
 );
-
 
 // Get all jobs posted by the company and display it on the page for user (owner)
 app.get(

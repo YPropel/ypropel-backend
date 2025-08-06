@@ -4015,7 +4015,7 @@ app.delete(
       companyId: company_id,
     });
   })
-);
+);*/
 
 // Get all jobs posted by the company and display it on the page for user (owner)
 app.get(
@@ -4050,7 +4050,7 @@ app.get(
 
     res.json(result.rows);
   })
-); */
+); 
 app.post(
   "/companies/post-job",
   authenticateToken,

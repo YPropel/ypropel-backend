@@ -3915,6 +3915,38 @@ app.get(
   })
 ); 
 
+// --- Delete Company Route
+app.delete(
+  "/companies/delete",
+  asyncHandler(async (req: Request, res: Response) => {
+    const { companyId, userId } = req.body; // Receive companyId and userId from the request body
+
+    if (!companyId || !userId) {
+      return res.status(400).json({ error: "Company ID and User ID are required" });
+    }
+
+    try {
+      // Ensure the company belongs to the logged-in user
+      const companyResult = await query(
+        "SELECT id FROM companies WHERE id = $1 AND user_id = $2", 
+        [companyId, userId]
+      );
+
+      if (companyResult.rows.length === 0) {
+        return res.status(400).json({ error: "You do not have permission to delete this company." });
+      }
+
+      // Proceed to delete the company from the database
+      await query("DELETE FROM companies WHERE id = $1", [companyId]);
+
+      // Return a success message
+      res.status(200).json({ success: true, message: "Company successfully deleted." });
+    } catch (error) {
+      console.error("Error deleting company:", error);
+      res.status(500).json({ error: "Internal Server Error" });
+    }
+  })
+);
 
 // --- Post a Job by a company user (linked to a company)
 // --- Post a Job by a company user (linked to a company)

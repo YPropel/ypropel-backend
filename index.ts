@@ -4048,6 +4048,15 @@ app.get(
     // Log to check the received companyId
     console.log("Received companyId:", parsedCompanyId);
 
+     // ✅ Deactivate expired jobs (free or paid) before returning list
+        await query(`
+          UPDATE jobs
+          SET is_active = false
+          WHERE expires_at IS NOT NULL AND expires_at < NOW() AND is_active = true
+
+        `);
+      console.log("Deactivating expired jobs before returning company jobs...");
+
     // Fetch jobs for the given companyId
     const result = await query(
       "SELECT * FROM jobs WHERE company_id = $1 ORDER BY posted_at DESC",
@@ -4057,6 +4066,7 @@ app.get(
     res.json(result.rows);
   })
 ); 
+//--------------Allow companies to post jobs for free or paid
 app.post(
   "/companies/post-job",
   authenticateToken,
@@ -4116,13 +4126,17 @@ app.post(
     }
 
     // Set expiration based on plan type
-    let expiresAt: Date;
-    const now = new Date();
-    if (planType === "free") {
-      expiresAt = new Date(now.getTime() + 2 * 24 * 60 * 60 * 1000); // 2 days
-    } else {
-      expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000); // 30 days
-    }
+    let expiresAt: Date | null = null;
+      const now = new Date();
+
+      if (planType === "free") {
+        expiresAt = new Date(now.getTime() + 2 * 24 * 60 * 60 * 1000); // 2 days
+      } else if (planType === "pay_per_post") {
+        expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000); // 30 days
+      } else if (planType === "subscription") {
+        expiresAt = null; // No expiration for subscription jobs
+      }
+
 
     try {
       const result = await query(
@@ -4224,6 +4238,7 @@ app.get(
     }
   })
 );
+//-------Payment for jobs 
 //----------allow company users pay per job post
 app.post(
   "/payment/create-checkout-session",
@@ -4252,6 +4267,36 @@ app.post(
     res.json({ url: session.url });
   })
 );
+
+app.post(
+  "/payment/create-subscription-session",
+  authenticateToken,
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+
+    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
+      apiVersion: "2024-04-10",
+    });
+
+    const session = await stripe.checkout.sessions.create({
+      mode: "subscription",
+      line_items: [
+        {
+          price: process.env.STRIPE_SUBSCRIPTION_PRICE_ID, // e.g., price_123...
+          quantity: 1,
+        },
+      ],
+      success_url: `${process.env.CLIENT_URL}/payment/subscription-success`,
+      cancel_url: `${process.env.CLIENT_URL}/PostJob`,
+      metadata: {
+        userId: req.user.userId,
+      },
+    });
+
+    res.json({ url: session.url });
+  })
+);
+
 
 //--------------end of companies profiles routes----------------
 //---------------------------------------------------

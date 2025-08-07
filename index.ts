@@ -4278,6 +4278,7 @@ app.post(
   authenticateToken,
   asyncHandler(async (req: Request, res: Response) => {
    const userId = (req.user as { userId: number }).userId;
+   console.log("USEr IDDDDDdd:", userId);
     // Get user email
     const userResult = await query("SELECT email FROM users WHERE id = $1", [userId]);
     if (userResult.rows.length === 0) {

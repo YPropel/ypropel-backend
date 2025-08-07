@@ -4311,7 +4311,7 @@ app.post(
 //------Routes for students Members subscriptions (Premium)-------------------------
 
 app.post(
-  "/payment/create-subscription-checkout-session", // Use the same endpoint or change if needed
+  "/payment/create-student-subscription-checkout-session", // New backend route for student subscription
   authenticateToken,
   asyncHandler(async (req: Request, res: Response) => {
     const userId = (req.user as { userId: number }).userId;
@@ -4325,7 +4325,7 @@ app.post(
 
     const customerEmail = userResult.rows[0].email;
 
-    // Create Stripe Checkout session for mini-courses subscription
+    // Create Stripe Checkout session for mini-courses subscription (student)
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
       payment_method_types: ["card"],

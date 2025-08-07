@@ -4347,6 +4347,13 @@ app.post(
 );
 
 // ------Webhook route to handle Stripe events (e.g., checkout session completed)
+// Only apply authentication for non-webhook routes
+app.use("/webhook", (req, res, next) => {
+  // Bypass authentication middleware for this route
+  next();
+});
+
+// Webhook route
 app.post("/webhook", express.raw({ type: "application/json" }), async (req: Request, res: Response): Promise<void> => {
   const sig = req.headers["stripe-signature"];
   console.log("Received event:", req.body); // Log the event for debugging
@@ -4389,20 +4396,18 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req: Requ
         console.log(`No user found with email ${customerEmail}`);
       }
 
-      // Send a success response
+      // Send a success response (but do not return the response object)
       res.status(200).send("Webhook processed successfully.");
     } else {
       // If event is not `checkout.session.completed`
       res.status(200).send("Event not handled.");
     }
-  } catch (err: unknown) {
+  } catch (err) {
     const error = err as Error;
     console.error("Webhook error:", error.message);
     res.status(400).send(`Webhook error: ${error.message}`);
   }
 });
-
-
 
 
 

@@ -4347,13 +4347,14 @@ app.post(
 );
 
 // ------Webhook route to handle Stripe events (e.g., checkout session completed)
-// Only apply authentication for non-webhook routes
+// Skip authentication for the /webhook route
 app.use("/webhook", (req, res, next) => {
-  // Bypass authentication middleware for this route
+  console.log("Skipping authentication for webhook route");
   next();
 });
 
 // Webhook route
+// Webhook handler
 app.post("/webhook", express.raw({ type: "application/json" }), async (req: Request, res: Response): Promise<void> => {
   const sig = req.headers["stripe-signature"];
   console.log("Received event:", req.body); // Log the event for debugging
@@ -4361,21 +4362,21 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req: Requ
   if (typeof sig !== "string") {
     console.error("No valid Stripe signature found.");
     res.status(400).send("No valid Stripe signature found.");
-    return; // Return early to prevent further processing
+    return;  // Exit after sending response
   }
 
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
   if (!webhookSecret) {
     console.error("Webhook secret is missing.");
     res.status(500).send("Webhook secret is missing.");
-    return; // Return early to prevent further processing
+    return;  // Exit after sending response
   }
 
   try {
-    // Verify the event using the webhook secret
     const event = stripe.webhooks.constructEvent(req.body, sig, webhookSecret);
     console.log("Received event:", event); // Log the event for debugging
 
+    // If the event type is `checkout.session.completed`
     if (event.type === "checkout.session.completed") {
       const session = event.data.object as Stripe.Checkout.Session;
       const customerEmail = session.customer_email;
@@ -4383,24 +4384,24 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req: Requ
       if (!customerEmail) {
         console.error("No customer email found.");
         res.status(400).send("No customer email found.");
-        return;
+        return;  // Exit after sending response
       }
 
       // Update the user's 'is_premium' status to true using their email
       const updateUserQuery = `UPDATE users SET is_premium = true WHERE email = $1`;
       const result = await query(updateUserQuery, [customerEmail]);
 
+      // Safely check if result.rowCount is not null or undefined
       if (result && result.rowCount !== null && result.rowCount > 0) {
         console.log(`User with email ${customerEmail} is now marked as premium.`);
       } else {
         console.log(`No user found with email ${customerEmail}`);
       }
 
-      // Send a success response (but do not return the response object)
+      // Send a success response (no return needed)
       res.status(200).send("Webhook processed successfully.");
     } else {
-      // If event is not `checkout.session.completed`
-      res.status(200).send("Event not handled.");
+      res.status(200).send("Event type not handled.");
     }
   } catch (err) {
     const error = err as Error;
@@ -4408,6 +4409,8 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req: Requ
     res.status(400).send(`Webhook error: ${error.message}`);
   }
 });
+
+
 
 
 

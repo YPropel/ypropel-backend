@@ -4274,7 +4274,7 @@ app.post(
 );
 //--------
 app.post(
-  "/payment/create-subscription-session",
+  "/payment/create-subscription-checkout-session",
   authenticateToken,
   asyncHandler(async (req: Request, res: Response) => {
    const userId = (req.user as { userId: number }).userId;

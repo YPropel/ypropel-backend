@@ -4360,13 +4360,13 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req: Requ
 
   if (typeof sig !== "string") {
     console.error("No valid Stripe signature found.");
-    return res.status(400).send("No valid Stripe signature found.");
+    return; 
   }
 
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
   if (!webhookSecret) {
     console.error("Webhook secret is missing.");
-    return res.status(500).send("Webhook secret is missing.");
+    return; 
   }
 
   try {

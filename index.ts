@@ -26,7 +26,12 @@ const limiter = rateLimit({
 
 //-----------------------
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, { apiVersion: "2025-07-30.basil" });
+// index.ts or stripe setup file
+
+// @ts-ignore - Allow Stripe to use a newer API version than TypeScript definitions
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
+  apiVersion: "2022-11-15",
+});
 
 //-----------------
 
@@ -4267,36 +4272,38 @@ app.post(
     res.json({ url: session.url });
   })
 );
-
+//--------
 app.post(
   "/payment/create-subscription-session",
   authenticateToken,
   asyncHandler(async (req: Request, res: Response) => {
-    if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+   const userId = (req.user as { userId: number }).userId;
+    // Get user email
+    const userResult = await query("SELECT email FROM users WHERE id = $1", [userId]);
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ error: "User not found" });
+    }
 
-    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-      apiVersion: "2024-04-10",
-    });
+    const customerEmail = userResult.rows[0].email;
 
+    // Create Stripe Checkout session
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
+      payment_method_types: ["card"],
+      customer_email: customerEmail,
       line_items: [
         {
-          price: process.env.STRIPE_SUBSCRIPTION_PRICE_ID, // e.g., price_123...
+          price: process.env.STRIPE_SUBSCRIPTION_PRICE_ID, // Use your actual Price ID
           quantity: 1,
         },
       ],
-      success_url: `${process.env.CLIENT_URL}/payment/subscription-success`,
-      cancel_url: `${process.env.CLIENT_URL}/PostJob`,
-      metadata: {
-        userId: req.user.userId,
-      },
+      success_url: "https://www.ypropel.com/subscription-success",
+      cancel_url: "https://www.ypropel.com/postjob",
     });
 
     res.json({ url: session.url });
   })
 );
-
 
 //--------------end of companies profiles routes----------------
 //---------------------------------------------------

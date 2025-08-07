@@ -4350,6 +4350,7 @@ app.post(
 app.post("/webhook", express.raw({ type: "application/json" }), async (req: Request, res: Response): Promise<void> => {
   // Skip token validation for the webhook
   const sig = req.headers["stripe-signature"];
+console.log('Received event:', event);
 
   // Check if the signature is a string
   if (typeof sig !== 'string') {

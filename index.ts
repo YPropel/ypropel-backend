@@ -4307,9 +4307,42 @@ app.post(
 );
 
 //--------------end of companies profiles routes----------------
-//---------------------------------------------------
+//-------------------------------------------------
+//------Routes for students Members subscriptions (Premium)-------------------------
 
+app.post(
+  "/payment/create-subscription-checkout-session", // Use the same endpoint or change if needed
+  authenticateToken,
+  asyncHandler(async (req: Request, res: Response) => {
+    const userId = (req.user as { userId: number }).userId;
+    console.log("User ID:", userId);
 
+    // Get user email from the database
+    const userResult = await query("SELECT email FROM users WHERE id = $1", [userId]);
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const customerEmail = userResult.rows[0].email;
+
+    // Create Stripe Checkout session for mini-courses subscription
+    const session = await stripe.checkout.sessions.create({
+      mode: "subscription",
+      payment_method_types: ["card"],
+      customer_email: customerEmail,
+      line_items: [
+        {
+          price: process.env.STRIPE_MINI_COURSE_PRICE_ID, // Use the mini-courses Price ID
+          quantity: 1,
+        },
+      ],
+      success_url: "https://www.ypropel.com/subscription-success", // Redirect after successful subscription
+      cancel_url: "https://www.ypropel.com/subscribe-cancel", // Redirect after cancellation
+    });
+
+    res.json({ url: session.url });
+  })
+);
 
 //---------------------------------------------------------------
 //---DB check block

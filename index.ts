@@ -4354,29 +4354,26 @@ app.use("/webhook", (req, res, next) => {
 });
 
 // Webhook route
-// Webhook handler
 app.post("/webhook", express.raw({ type: "application/json" }), async (req: Request, res: Response): Promise<void> => {
   const sig = req.headers["stripe-signature"];
   console.log("Received event:", req.body); // Log the event for debugging
 
   if (typeof sig !== "string") {
     console.error("No valid Stripe signature found.");
-    res.status(400).send("No valid Stripe signature found.");
-    return;  // Exit after sending response
+    return res.status(400).send("No valid Stripe signature found.");
   }
 
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
   if (!webhookSecret) {
     console.error("Webhook secret is missing.");
-    res.status(500).send("Webhook secret is missing.");
-    return;  // Exit after sending response
+    return res.status(500).send("Webhook secret is missing.");
   }
 
   try {
     const event = stripe.webhooks.constructEvent(req.body, sig, webhookSecret);
     console.log("Received event:", event); // Log the event for debugging
 
-    // If the event type is `checkout.session.completed`
+    // Handle the event when checkout session is completed
     if (event.type === "checkout.session.completed") {
       const session = event.data.object as Stripe.Checkout.Session;
       const customerEmail = session.customer_email;
@@ -4391,17 +4388,18 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req: Requ
       const updateUserQuery = `UPDATE users SET is_premium = true WHERE email = $1`;
       const result = await query(updateUserQuery, [customerEmail]);
 
-      // Safely check if result.rowCount is not null or undefined
-      if (result && result.rowCount !== null && result.rowCount > 0) {
+        if (result && result.rowCount && result.rowCount > 0) {
         console.log(`User with email ${customerEmail} is now marked as premium.`);
       } else {
         console.log(`No user found with email ${customerEmail}`);
       }
 
-      // Send a success response (no return needed)
+      // Send a success response
       res.status(200).send("Webhook processed successfully.");
     } else {
+      // Handle other events (optional)
       res.status(200).send("Event type not handled.");
+      return;
     }
   } catch (err) {
     const error = err as Error;
@@ -4409,8 +4407,6 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req: Requ
     res.status(400).send(`Webhook error: ${error.message}`);
   }
 });
-
-
 
 
 

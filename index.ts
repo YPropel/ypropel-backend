@@ -4226,7 +4226,7 @@ app.get(
 );
 //----------allow company users pay per job post
 app.post(
-  "/create-checkout-session",
+  "payment/create-checkout-session",
   authenticateToken,
   asyncHandler(async (req: Request, res: Response) => {
     const session = await stripe.checkout.sessions.create({

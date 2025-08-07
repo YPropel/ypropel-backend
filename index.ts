@@ -4245,8 +4245,8 @@ app.post(
           quantity: 1,
         },
       ],
-      success_url: `https://ypropel.com/payment/success`,
-      cancel_url: `https://ypropel.com/payment/cancel`,
+      success_url: `https://www.ypropel.com/payment/success`,
+      cancel_url: `https://www.ypropel.com/payment/cancel`,
     });
 
     res.json({ url: session.url });

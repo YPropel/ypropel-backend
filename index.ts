@@ -11,6 +11,9 @@ import adminRoutes from "./adminbackend/BackendRoutes"; //--adminbackendroute
 import { OAuth2Client } from "google-auth-library";
 import { Pool } from "pg";
 import rateLimit from "express-rate-limit";
+import Stripe from "stripe";
+
+
 
 // Define the rate limiter middleware
 const limiter = rateLimit({
@@ -23,6 +26,9 @@ const limiter = rateLimit({
 
 //-----------------------
 
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, { apiVersion: "2025-07-30.basil" });
+
+//-----------------
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL, // or your config
@@ -4105,7 +4111,7 @@ app.post(
         [company_id]
       );
       if (existingJob.rows.length > 0) {
-        return res.status(400).json({ error: "You already have an active job post under the free plan." });
+        return res.status(400).json({ error: "You can have only one active free job post under the free plan. Delete current post or switch to paid plan" });
       }
     }
 
@@ -4218,8 +4224,40 @@ app.get(
     }
   })
 );
+//----------allow company users pay per job post
+app.post(
+  "/create-checkout-session",
+  authenticateToken,
+  asyncHandler(async (req: Request, res: Response) => {
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ["card"],
+      mode: "payment",
+      line_items: [
+        {
+          price_data: {
+            currency: "usd",
+            product_data: {
+              name: "YPropel Pay-Per-Post Job Plan",
+              description: "One-time featured job post with 30-day visibility",
+            },
+            unit_amount: 7500, // $75.00 in cents
+          },
+          quantity: 1,
+        },
+      ],
+      success_url: `https://ypropel.com/payment/success`,
+      cancel_url: `https://ypropel.com/payment/cancel`,
+    });
+
+    res.json({ url: session.url });
+  })
+);
 
 //--------------end of companies profiles routes----------------
+//---------------------------------------------------
+
+
+
 //---------------------------------------------------------------
 //---DB check block
 (async () => {

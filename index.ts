@@ -4348,8 +4348,9 @@ app.post(
 
 // ------Webhook route to handle Stripe events (e.g., checkout session completed)
 app.post("/webhook", express.raw({ type: "application/json" }), async (req: Request, res: Response): Promise<void> => {
+  // Skip token validation for the webhook
   const sig = req.headers["stripe-signature"];
-  
+
   // Check if the signature is a string
   if (typeof sig !== 'string') {
     console.error("No valid Stripe signature found.");
@@ -4397,13 +4398,11 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req: Requ
       return;
     }
   } catch (err: unknown) {
-    // Type assertion for err as Error
     const error = err as Error;
     console.error("Webhook error: ", error.message);
     res.status(400).send(`Webhook error: ${error.message}`);
   }
 });
-
 
 //---------------------------------------------------------------
 //---DB check block

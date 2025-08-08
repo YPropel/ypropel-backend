@@ -4388,15 +4388,48 @@ app.post(
 //------Routes for students Members subscriptions (Premium)-------------------------
 
 app.post(
-  "/payment/confirm-payment",
+  "/payment/create-student-subscription-checkout-session",
   authenticateToken,
   asyncHandler(async (req: Request, res: Response) => {
-    // Get user ID from the request
     const userId = (req.user as { userId: number }).userId;
-    console.log("User ID:", userId);
+    console.log("User IDDDDDD:", userId);
 
-    // Retrieve session_id from the frontend
-    const { session_id } = req.body;
+    // Get user email from the database
+    const userResult = await query("SELECT email FROM users WHERE id = $1", [userId]);
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const customerEmail = userResult.rows[0].email;
+
+    // Create Stripe Checkout session for mini-courses subscription (student)
+    const session = await stripe.checkout.sessions.create({
+      mode: "subscription",
+      payment_method_types: ["card"],
+      customer_email: customerEmail,
+      line_items: [
+        {
+          price: process.env.STRIPE_MINI_COURSE_PRICE_ID, // Use the mini-courses Price ID
+          quantity: 1,
+        },
+      ],
+      success_url: `https://www.ypropel.com/success?session_id={CHECKOUT_SESSION_ID}`, // Success URL with session_id
+      cancel_url: "https://www.ypropel.com/subscribe-cancel", // Redirect after cancellation
+    });
+
+    // Return the URL to redirect the user to Stripe Checkout
+    res.json({ url: session.url });
+  })
+);
+
+
+//------route to confirm  subscription payment done on stripe so make user premium
+// Route to confirm payment and update user status
+app.post(
+  "/payment/confirm-payment",
+  asyncHandler(async (req: Request, res: Response) => {
+    const { session_id } = req.body;  // Get session_id from the request body
+
     if (!session_id) {
       return res.status(400).json({ error: "session_id is required" });
     }
@@ -4406,7 +4439,7 @@ app.post(
       const session = await stripe.checkout.sessions.retrieve(session_id);
       console.log("Stripe session details:", session);
 
-      // Verify if the payment was successful
+      // Check if the payment was successful
       if (session.payment_status === "paid") {
         const customerEmail = session.customer_email;
         console.log("Customer email:", customerEmail);
@@ -4422,7 +4455,6 @@ app.post(
           console.log(`No user found with email ${customerEmail}`);
           res.status(404).json({ error: "User not found" });
         }
-
       } else {
         res.status(400).json({ error: "Payment was not successful." });
       }
@@ -4433,52 +4465,6 @@ app.post(
   })
 );
 
-
-
-//------route to confirm  subscription payment done on stripe so make user premium
-//------route to confirm subscription payment done on stripe so make user premium
-app.get(
-  "/success",
-  asyncHandler(async (req: Request, res: Response) => {
-    const sessionId = req.query.session_id as string;  // Ensure session_id is a string
-    console.log("Received session_id:", sessionId);  // Log the session_id
-
-    if (!sessionId) {
-      console.error("No session_id found in the query string.");
-      return res.status(400).send("No session ID found.");
-    }
-
-    try {
-      // Fetch the session from Stripe using the session_id
-      const session = await stripe.checkout.sessions.retrieve(sessionId);
-      console.log("Stripe session details:", session); // Log session details
-
-      // Verify the payment status
-      if (session.payment_status === "paid") {
-        const customerEmail = session.customer_email;
-        console.log("Customer email:", customerEmail);  // Log the email
-
-        // Update user status to premium in the database
-        const updateUserQuery = `UPDATE users SET is_premium = true WHERE email = $1`;
-        const result = await query(updateUserQuery, [customerEmail]);
-
-        if (result.rowCount !== null && result.rowCount > 0) {
-          console.log(`User ${customerEmail} is now premium.`);
-          res.redirect("/mini-courses"); // Or the exact path to your Mini-Courses page
-        } else {
-          console.log(`No user found with email ${customerEmail}`);
-          res.status(404).send("User not found.");
-        }
-
-      } else {
-        res.send("Payment failed or was not completed.");
-      }
-    } catch (error) {
-      console.error("Error processing success:", error);
-      res.status(500).send("There was an error processing your payment.");
-    }
-  })
-);
 
 
 //---------------------------------------------------------------

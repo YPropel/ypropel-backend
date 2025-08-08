@@ -571,10 +571,13 @@ app.post("/auth/signin", asyncHandler(signinHandler));
 
 
 // Test route to check if server is working
-app.post("/test", (req, res) => {
+app.post(
+  "test",
+  authenticateToken,
+  asyncHandler(async (req: Request, res: Response) => {
   console.log("Test POST route is working");
   res.status(200).send("Test POST route is working");
-});
+}));
 
 
 

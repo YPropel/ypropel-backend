@@ -250,7 +250,7 @@ app.use(async (req: Request, res: Response, next: NextFunction) => {
 //-------------------------------
 // ------Webhook route to handle Stripe events (e.g., checkout session completed)
 // Skip authentication for the /webhook route
-app.use("/webhook", (req, res, next) => {
+/*app.use("/webhook", (req, res, next) => {
   console.log("Skipping authentication for webhook route");
   next();
 }); 
@@ -312,7 +312,7 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req: Requ
     console.error("Webhook error:", error.message);
     res.status(400).send(`Webhook error: ${error.message}`);
   }
-});
+});*/
 
 
 
@@ -567,19 +567,6 @@ app.post("/auth/signin", asyncHandler(signinHandler));
 
 //----------------------Routes---------------------------
 // -------- Protected route to get current user's profile ---------
-
-
-
-// Test route to check if server is working
-app.post(
-  "test",
-  authenticateToken,
-  asyncHandler(async (req: Request, res: Response) => {
-  console.log("Test POST route is working");
-  res.status(200).send("Test POST route is working");
-}));
-
-
 
 
 app.get(
@@ -4433,6 +4420,33 @@ app.post(
     res.json({ url: session.url });
   })
 );
+//------route to confirm  subscription payment done on stripe so make user premium
+app.get("/success", async (req, res) => {
+  const sessionId = req.query.session_id;
+
+  try {
+    // Fetch the session from Stripe using the session_id
+    const session = await stripe.checkout.sessions.retrieve(sessionId);
+
+    // Verify the payment status
+    if (session.payment_status === "paid") {
+      const customerEmail = session.customer_email;
+
+      // Update user status to premium in the database
+      const updateUserQuery = `UPDATE users SET is_premium = true WHERE email = $1`;
+      await query(updateUserQuery, [customerEmail]);
+
+      // Redirect the user to the Mini-Courses page
+      res.redirect("/mini-courses"); // Or the exact path to your Mini-Courses page
+    } else {
+      res.send("Payment failed or was not completed.");
+    }
+  } catch (error) {
+    console.error("Error processing success:", error);
+    res.send("There was an error processing your payment.");
+  }
+});
+
 
 
 

@@ -139,7 +139,7 @@ class AuthError extends Error {
 }
 
 
-//------Middle ware authenticate
+//------Middleware authenticate
 function authenticateToken(req: Request, res: Response, next: NextFunction): void {
   const authHeader = req.headers["authorization"];
   const token = authHeader?.split(" ")[1];
@@ -238,6 +238,72 @@ app.use(async (req: Request, res: Response, next: NextFunction) => {
   } catch (error) {
     console.error("Error logging visitor:", error);
     next();
+  }
+});
+
+
+//-------------------------------
+// ------Webhook route to handle Stripe events (e.g., checkout session completed)
+// Skip authentication for the /webhook route
+app.use("/webhook", (req, res, next) => {
+  console.log("Skipping authentication for webhook route");
+  next();
+});
+
+// Webhook route
+app.post("/webhook", express.raw({ type: "application/json" }), async (req: Request, res: Response): Promise<void> => {
+  const sig = req.headers["stripe-signature"];
+
+  console.log("Webhook received at /webhook with path:", req.originalUrl);  // Log the request URL
+  console.log("Received event:", req.body); // Log the event for debugging
+
+  if (typeof sig !== "string") {
+    console.error("No valid Stripe signature found.");
+    return; 
+  }
+
+  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+  if (!webhookSecret) {
+    console.error("Webhook secret is missing.");
+    return; 
+  }
+
+  try {
+    const event = stripe.webhooks.constructEvent(req.body, sig, webhookSecret);
+    console.log("Received event:", event); // Log the event for debugging
+
+    // Handle the event when checkout session is completed
+    if (event.type === "checkout.session.completed") {
+      const session = event.data.object as Stripe.Checkout.Session;
+      const customerEmail = session.customer_email;
+
+      if (!customerEmail) {
+        console.error("No customer email found.");
+        res.status(400).send("No customer email found.");
+        return;  // Exit after sending response
+      }
+
+      // Update the user's 'is_premium' status to true using their email
+      const updateUserQuery = `UPDATE users SET is_premium = true WHERE email = $1`;
+      const result = await query(updateUserQuery, [customerEmail]);
+
+        if (result && result.rowCount && result.rowCount > 0) {
+        console.log(`User with email ${customerEmail} is now marked as premium.`);
+      } else {
+        console.log(`No user found with email ${customerEmail}`);
+      }
+
+      // Send a success response
+      res.status(200).send("Webhook processed successfully.");
+    } else {
+      // Handle other events (optional)
+      res.status(200).send("Event type not handled.");
+      return;
+    }
+  } catch (err) {
+    const error = err as Error;
+    console.error("Webhook error:", error.message);
+    res.status(400).send(`Webhook error: ${error.message}`);
   }
 });
 
@@ -4345,71 +4411,6 @@ app.post(
     res.json({ url: session.url });
   })
 );
-
-// ------Webhook route to handle Stripe events (e.g., checkout session completed)
-// Skip authentication for the /webhook route
-app.use("/webhook", (req, res, next) => {
-  console.log("Skipping authentication for webhook route");
-  next();
-});
-
-// Webhook route
-app.post("/x/webhook", express.raw({ type: "application/json" }), async (req: Request, res: Response): Promise<void> => {
-  const sig = req.headers["stripe-signature"];
-
-  console.log("Webhook received at /webhook with path:", req.originalUrl);  // Log the request URL
-  console.log("Received event:", req.body); // Log the event for debugging
-
-  if (typeof sig !== "string") {
-    console.error("No valid Stripe signature found.");
-    return; 
-  }
-
-  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
-  if (!webhookSecret) {
-    console.error("Webhook secret is missing.");
-    return; 
-  }
-
-  try {
-    const event = stripe.webhooks.constructEvent(req.body, sig, webhookSecret);
-    console.log("Received event:", event); // Log the event for debugging
-
-    // Handle the event when checkout session is completed
-    if (event.type === "checkout.session.completed") {
-      const session = event.data.object as Stripe.Checkout.Session;
-      const customerEmail = session.customer_email;
-
-      if (!customerEmail) {
-        console.error("No customer email found.");
-        res.status(400).send("No customer email found.");
-        return;  // Exit after sending response
-      }
-
-      // Update the user's 'is_premium' status to true using their email
-      const updateUserQuery = `UPDATE users SET is_premium = true WHERE email = $1`;
-      const result = await query(updateUserQuery, [customerEmail]);
-
-        if (result && result.rowCount && result.rowCount > 0) {
-        console.log(`User with email ${customerEmail} is now marked as premium.`);
-      } else {
-        console.log(`No user found with email ${customerEmail}`);
-      }
-
-      // Send a success response
-      res.status(200).send("Webhook processed successfully.");
-    } else {
-      // Handle other events (optional)
-      res.status(200).send("Event type not handled.");
-      return;
-    }
-  } catch (err) {
-    const error = err as Error;
-    console.error("Webhook error:", error.message);
-    res.status(400).send(`Webhook error: ${error.message}`);
-  }
-});
-
 
 
 

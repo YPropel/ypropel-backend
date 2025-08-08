@@ -4354,7 +4354,7 @@ app.use("/webhook", (req, res, next) => {
 });
 
 // Webhook route
-app.post("/webhook", express.raw({ type: "application/json" }), async (req: Request, res: Response): Promise<void> => {
+app.post("/x/webhook", express.raw({ type: "application/json" }), async (req: Request, res: Response): Promise<void> => {
   const sig = req.headers["stripe-signature"];
 
   console.log("Webhook received at /webhook with path:", req.originalUrl);  // Log the request URL

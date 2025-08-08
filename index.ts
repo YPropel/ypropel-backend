@@ -4413,7 +4413,7 @@ app.post(
           quantity: 1,
         },
       ],
-      success_url: `https://www.ypropel.com/student-checkout-success`, // Success URL with session_id
+      success_url: `https://www.ypropel.com/student-checkout-success?session_id={CHECKOUT_SESSION_ID}`, // Success URL with session_id
       cancel_url: "https://www.ypropel.com/subscribe-cancel", // Redirect after cancellation
     });
 

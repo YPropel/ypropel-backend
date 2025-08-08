@@ -247,11 +247,6 @@ app.use(async (req: Request, res: Response, next: NextFunction) => {
 
 
 
-// Test route to check if server is working
-app.post("/test", (req, res) => {
-  console.log("Test POST route is working");
-  res.status(200).send("Test POST route is working");
-});
 //-------------------------------
 // ------Webhook route to handle Stripe events (e.g., checkout session completed)
 // Skip authentication for the /webhook route
@@ -572,6 +567,18 @@ app.post("/auth/signin", asyncHandler(signinHandler));
 
 //----------------------Routes---------------------------
 // -------- Protected route to get current user's profile ---------
+
+
+
+// Test route to check if server is working
+app.post("/test", (req, res) => {
+  console.log("Test POST route is working");
+  res.status(200).send("Test POST route is working");
+});
+
+
+
+
 app.get(
   "/users/me",
   authenticateToken,

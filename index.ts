@@ -4413,13 +4413,15 @@ app.post(
           quantity: 1,
         },
       ],
-      success_url: "https://www.ypropel.com/mini-courses", // Directly redirect to mini-courses page
+      success_url: `https://www.ypropel.com/success?session_id={CHECKOUT_SESSION_ID}`, // Success URL with session_id
       cancel_url: "https://www.ypropel.com/subscribe-cancel", // Redirect after cancellation
     });
 
+    // Return the URL to redirect the user to Stripe Checkout
     res.json({ url: session.url });
   })
 );
+
 //------route to confirm  subscription payment done on stripe so make user premium
 //------route to confirm subscription payment done on stripe so make user premium
 app.get(

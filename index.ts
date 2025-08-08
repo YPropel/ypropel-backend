@@ -4423,14 +4423,18 @@ app.post(
 //------route to confirm  subscription payment done on stripe so make user premium
 app.get("/success", async (req, res) => {
   const sessionId = req.query.session_id;
+console.log("Received session_id:", sessionId);  // Log the session_id
 
   try {
     // Fetch the session from Stripe using the session_id
     const session = await stripe.checkout.sessions.retrieve(sessionId);
+    console.log("Stripe session details:", session); // Log session details
+
 
     // Verify the payment status
     if (session.payment_status === "paid") {
       const customerEmail = session.customer_email;
+       console.log("Customer email:", customerEmail);  // Log the email
 
       // Update user status to premium in the database
       const updateUserQuery = `UPDATE users SET is_premium = true WHERE email = $1`;
@@ -4438,6 +4442,7 @@ app.get("/success", async (req, res) => {
 
       // Redirect the user to the Mini-Courses page
       res.redirect("/mini-courses"); // Or the exact path to your Mini-Courses page
+         console.log("Payment was not successful."); 
     } else {
       res.send("Payment failed or was not completed.");
     }

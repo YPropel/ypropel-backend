@@ -251,8 +251,12 @@ app.use(async (req: Request, res: Response, next: NextFunction) => {
 //-------------------------------
 // ------Webhook route to handle Stripe events (e.g., checkout session completed)
 // Skip authentication for the /webhook route
-app.use("/webhook", (req, res, next) => {
+/*app.use("/webhook", (req, res, next) => {
   console.log("Skipping authentication for webhook route");
+  next();
+}); */
+app.use((req, res, next) => {
+  console.log(`${req.method} request received for ${req.originalUrl}`);
   next();
 });
 

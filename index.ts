@@ -4436,7 +4436,7 @@ app.post(
 
     try {
       // Retrieve the session from Stripe using the session_id
-     // const session = await stripe.checkout.sessions.retrieve(session_id);
+      //const session = await stripe.checkout.sessions.retrieve(session_id);
       console.log("Stripe session details:", session_id);
 
       // Check if the payment was successful

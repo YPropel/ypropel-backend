@@ -4421,38 +4421,49 @@ app.post(
   })
 );
 //------route to confirm  subscription payment done on stripe so make user premium
-app.get("/success", async (req, res) => {
-  const sessionId = req.query.session_id;
-console.log("Received session_id:", sessionId);  // Log the session_id
+//------route to confirm subscription payment done on stripe so make user premium
+app.get(
+  "/success",
+  asyncHandler(async (req: Request, res: Response) => {
+    const sessionId = req.query.session_id as string;  // Ensure session_id is a string
+    console.log("Received session_id:", sessionId);  // Log the session_id
 
-  try {
-    // Fetch the session from Stripe using the session_id
-    const session = await stripe.checkout.sessions.retrieve(sessionId);
-    console.log("Stripe session details:", session); // Log session details
-
-
-    // Verify the payment status
-    if (session.payment_status === "paid") {
-      const customerEmail = session.customer_email;
-       console.log("Customer email:", customerEmail);  // Log the email
-
-      // Update user status to premium in the database
-      const updateUserQuery = `UPDATE users SET is_premium = true WHERE email = $1`;
-      await query(updateUserQuery, [customerEmail]);
-
-      // Redirect the user to the Mini-Courses page
-      res.redirect("/mini-courses"); // Or the exact path to your Mini-Courses page
-         console.log("Payment was not successful."); 
-    } else {
-      res.send("Payment failed or was not completed.");
+    if (!sessionId) {
+      console.error("No session_id found in the query string.");
+      return res.status(400).send("No session ID found.");
     }
-  } catch (error) {
-    console.error("Error processing success:", error);
-    res.send("There was an error processing your payment.");
-  }
-});
 
+    try {
+      // Fetch the session from Stripe using the session_id
+      const session = await stripe.checkout.sessions.retrieve(sessionId);
+      console.log("Stripe session details:", session); // Log session details
 
+      // Verify the payment status
+      if (session.payment_status === "paid") {
+        const customerEmail = session.customer_email;
+        console.log("Customer email:", customerEmail);  // Log the email
+
+        // Update user status to premium in the database
+        const updateUserQuery = `UPDATE users SET is_premium = true WHERE email = $1`;
+        const result = await query(updateUserQuery, [customerEmail]);
+
+        if (result.rowCount !== null && result.rowCount > 0) {
+          console.log(`User ${customerEmail} is now premium.`);
+          res.redirect("/mini-courses"); // Or the exact path to your Mini-Courses page
+        } else {
+          console.log(`No user found with email ${customerEmail}`);
+          res.status(404).send("User not found.");
+        }
+
+      } else {
+        res.send("Payment failed or was not completed.");
+      }
+    } catch (error) {
+      console.error("Error processing success:", error);
+      res.status(500).send("There was an error processing your payment.");
+    }
+  })
+);
 
 
 //---------------------------------------------------------------

@@ -4436,12 +4436,12 @@ app.post(
 
     try {
       // Retrieve the session from Stripe using the session_id
-      const session = await stripe.checkout.sessions.retrieve(session_id);
-      console.log("Stripe session details:", session);
+     // const session = await stripe.checkout.sessions.retrieve(session_id);
+      console.log("Stripe session details:", session_id);
 
       // Check if the payment was successful
-      if (session.payment_status === "paid") {
-        const customerEmail = session.customer_email;
+      if (session_id.payment_status === "paid") {
+        const customerEmail = session_id.customer_email;
         console.log("Customer email:", customerEmail);
 
         // Update user status to premium in the database

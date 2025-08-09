@@ -4428,20 +4428,21 @@ app.post(
 app.post(
   "/payment/confirm-payment",
   asyncHandler(async (req: Request, res: Response) => {
-    const { session_id } = req.body;  // Get session_id from the request body
+    // Get session_id from query parameters (URL query)
+    const { session_id } = req.query;
 
-    if (!session_id) {
+    if (!session_id || typeof session_id !== "string") {
       return res.status(400).json({ error: "session_id is required" });
     }
 
     try {
       // Retrieve the session from Stripe using the session_id
-      //const session = await stripe.checkout.sessions.retrieve(session_id);
-      console.log("Stripe session details:", session_id);
+      const session = await stripe.checkout.sessions.retrieve(session_id);
+      console.log("Stripe session details:", session);
 
       // Check if the payment was successful
-      if (session_id.payment_status === "paid") {
-        const customerEmail = session_id.customer_email;
+      if (session.payment_status === "paid") {
+        const customerEmail = session.customer_email;
         console.log("Customer email:", customerEmail);
 
         // Update user status to premium in the database
@@ -4464,7 +4465,6 @@ app.post(
     }
   })
 );
-
 
 
 //---------------------------------------------------------------

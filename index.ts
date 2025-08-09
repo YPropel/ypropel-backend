@@ -4426,7 +4426,7 @@ app.post(
 //------route to confirm  subscription payment done on stripe so make user premium
 // Route to confirm payment and update user status
 app.post(
-  "/payment/confirm-payment",
+ "/payment/confirm-student-payment",
   asyncHandler(async (req: Request, res: Response) => {
     // Get session_id from query parameters (URL query)
     const { session_id } = req.query;

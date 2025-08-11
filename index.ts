@@ -4439,8 +4439,9 @@ app.post(
       payment_method_types: ["card"],
       line_items: [{ price: priceId, quantity: 1 }],
       customer_email: req.user.email, // prefills email on Stripe checkout
-      success_url: `${process.env.FRONTEND_URL}/student-subscribe/confirmation?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${process.env.FRONTEND_URL}/student-subscribe`,
+      success_url: "https://www.ypropel.com/student-subscribe/confirmation?session_id={CHECKOUT_SESSION_ID}",
+cancel_url: "https://www.ypropel.com/student-subscribe",
+
       metadata: {
         userId: req.user.userId.toString(),
         userEmail: req.user.email,

@@ -4434,40 +4434,46 @@ app.post(
 
 //------route to confirm  subscription payment done on stripe so make user premium
 // Route to confirm payment and update user status
+// Test route to create checkout session
+app.post(
+  "/payment/create-student-subscription-checkout-session",
+  authenticateToken,
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    console.log("✅ Test route hit: create-student-subscription-checkout-session");
+    console.log("User ID:", req.user.userId);
+
+    // Return a dummy session ID and URL
+    res.json({
+      id: "test_session_123",
+      url: "https://checkout.stripe.com/test_session_123",
+    });
+  })
+);
+
+// Test route to confirm payment
 app.post(
   "/payment/confirm-student-payment",
   authenticateToken,
   asyncHandler(async (req: Request, res: Response) => {
-    try {
-      const { sessionId } = req.body;
-      if (!sessionId) {
-        return res.status(400).json({ error: "sessionId is required" });
-      }
-
-      // Fetch session details from Stripe
-      const session = await stripe.checkout.sessions.retrieve(sessionId);
-
-      if (session.payment_status === "paid") {
-        // Example: Update user to premium in your DB
-        // await db.query("UPDATE users SET isPremium = TRUE WHERE id = $1", [req.user.userId]);
-
-        // Respond success
-        return res.json({
-          success: true,
-          message: "Payment confirmed and user upgraded to premium",
-          sessionId,
-        });
-      } else {
-        return res.status(400).json({
-          success: false,
-          message: "Payment not completed",
-          payment_status: session.payment_status,
-        });
-      }
-    } catch (error) {
-      console.error("Error confirming payment:", error);
-      res.status(500).json({ success: false, error: "Failed to confirm payment" });
+    if (!req.user) {
+      return res.status(401).json({ error: "Unauthorized" });
     }
+
+    const { sessionId } = req.body;
+    console.log("✅ Test route hit: confirm-student-payment");
+    console.log("Received sessionId:", sessionId);
+    console.log("User ID:", req.user.userId);
+
+    // Simulate a successful payment confirmation
+    res.json({
+      success: true,
+      message: "Test payment confirmed successfully",
+      sessionId,
+    });
   })
 );
 

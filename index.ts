@@ -4469,39 +4469,30 @@ app.get(
   })
 );
 
-// Test route to confirm payment
+// Assuming you use Express, your auth middleware sets req.user with userId
+
 app.post(
-  "/payment/confirm-student-payment",
-  authenticateToken,
-  asyncHandler(async (req: Request, res: Response) => {
-    if (!req.user) {
+  "/users/set-premium",
+  authenticateToken, // checks JWT, populates req.user
+  asyncHandler(async (req, res) => {
+    const userId = req.user?.userId;
+    if (!userId) {
       return res.status(401).json({ error: "Unauthorized" });
     }
 
-    try {
-      const { session_id } = req.body;
-      if (!session_id) {
-        return res.status(400).json({ error: "Missing session_id in request body" });
-      }
+    // Update user in your DB, assuming you use some 'query' helper function:
+    const result = await query(
+      "UPDATE users SET is_premium = TRUE WHERE id = $1 RETURNING id, is_premium",
+      [userId]
+    );
 
-      // You can add real Stripe session verification here if you want
-      // For now, simulate success:
-      console.log("Payment confirmation for session_id:", session_id, "userId:", req.user.userId);
-
-      // TODO: Update user record in DB to premium here
-
-      res.json({
-        success: true,
-        message: "Payment confirmed and user upgraded to premium",
-        session_id,
-      });
-    } catch (err) {
-      console.error("Error confirming payment:", err);
-      res.status(500).json({ success: false, error: "Failed to confirm payment" });
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: "User not found" });
     }
+
+    res.json({ success: true, user: result.rows[0] });
   })
 );
-
 
 
 //---------------------------------------------------------------

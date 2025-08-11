@@ -4440,22 +4440,33 @@ app.post(
   asyncHandler(async (req: Request, res: Response) => {
     try {
       const { sessionId } = req.body;
+      if (!sessionId) {
+        return res.status(400).json({ error: "sessionId is required" });
+      }
 
-      console.log("✅ Test route hit: confirm-student-payment");
-      console.log("Received sessionId:", sessionId);
+      // Fetch session details from Stripe
+      const session = await stripe.checkout.sessions.retrieve(sessionId);
 
-      // Simulate a successful payment confirmation
-      res.json({
-        success: true,
-        message: "Test payment confirmed successfully",
-        sessionId,
-      });
-    } catch (err) {
-      console.error("❌ Error in test confirm payment route:", err);
-      res.status(500).json({
-        success: false,
-        error: "Test confirm payment route failed",
-      });
+      if (session.payment_status === "paid") {
+        // Example: Update user to premium in your DB
+        // await db.query("UPDATE users SET isPremium = TRUE WHERE id = $1", [req.user.userId]);
+
+        // Respond success
+        return res.json({
+          success: true,
+          message: "Payment confirmed and user upgraded to premium",
+          sessionId,
+        });
+      } else {
+        return res.status(400).json({
+          success: false,
+          message: "Payment not completed",
+          payment_status: session.payment_status,
+        });
+      }
+    } catch (error) {
+      console.error("Error confirming payment:", error);
+      res.status(500).json({ success: false, error: "Failed to confirm payment" });
     }
   })
 );

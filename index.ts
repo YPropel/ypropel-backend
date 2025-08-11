@@ -4391,16 +4391,42 @@ app.post(
   "/payment/create-student-subscription-checkout-session",
   authenticateToken,
   asyncHandler(async (req: Request, res: Response) => {
-    console.log("✅ Route hit: /payment/create-student-subscription-checkout-session");
-    console.log("Request body:", req.body);
-    console.log("User from token:", req.user);
+    if (!req.user) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
 
-    // Simple test response
-    res.json({
-      success: true,
-      message: "Route is working!",
-      testCheckoutUrl: "https://www.ypropel.com"
-    });
+    try {
+      const session = await stripe.checkout.sessions.create({
+        payment_method_types: ["card"],
+        mode: "subscription",
+        line_items: [
+          {
+            price_data: {
+              currency: "usd",
+              unit_amount: 499, // $4.99
+              product_data: {
+                name: "YPropel Student Mini-Courses Subscription",
+                description: "Monthly subscription for premium mini-course access",
+              },
+              recurring: {
+                interval: "month",
+              },
+            },
+            quantity: 1,
+          },
+        ],
+        success_url: `${process.env.FRONTEND_URL}/payment/success?session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${process.env.FRONTEND_URL}/payment/cancel`,
+        metadata: {
+          userId: req.user.userId, // store user ID for later
+        },
+      });
+
+      res.json({ id: session.id, url: session.url });
+    } catch (error) {
+      console.error("Stripe Checkout Error:", error);
+      res.status(500).json({ error: "Failed to create checkout session" });
+    }
   })
 );
 
@@ -4412,18 +4438,28 @@ app.post(
   "/payment/confirm-student-payment",
   authenticateToken,
   asyncHandler(async (req: Request, res: Response) => {
-    console.log("✅ Route hit: /payment/confirm-student-payment");
-    console.log("Request body:", req.body);
-    console.log("User from token:", req.user);
+    try {
+      const { sessionId } = req.body;
 
-    // Simple test response
-    res.json({
-      success: true,
-      message: "Payment confirmation route is working!",
-      receivedData: req.body
-    });
+      console.log("✅ Test route hit: confirm-student-payment");
+      console.log("Received sessionId:", sessionId);
+
+      // Simulate a successful payment confirmation
+      res.json({
+        success: true,
+        message: "Test payment confirmed successfully",
+        sessionId,
+      });
+    } catch (err) {
+      console.error("❌ Error in test confirm payment route:", err);
+      res.status(500).json({
+        success: false,
+        error: "Test confirm payment route failed",
+      });
+    }
   })
 );
+
 
 
 //---------------------------------------------------------------

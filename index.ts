@@ -4431,7 +4431,8 @@ app.post(
     if (!req.user) return res.status(401).json({ error: "Unauthorized" });
 
     // Your Stripe product price ID for the student monthly subscription
-    const priceId = process.env.STRIPE_STUDENT_SUBSCRIPTION_PRICE_ID!;
+    const priceId = process.env.STRIPE_MINI_COURSE_PRICE_ID!;
+
     
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",

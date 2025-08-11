@@ -4425,54 +4425,47 @@ app.post(
 // Route to confirm payment and update user status
 // Test route to create checkout session
 app.post(
-  "/payment/create-student-subscription-checkout-session",
+  "/subscriptions/create-checkout-session",
+  authenticateToken, // Your auth middleware
+  asyncHandler(async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+
+    // Your Stripe product price ID for the student monthly subscription
+    const priceId = process.env.STRIPE_STUDENT_SUBSCRIPTION_PRICE_ID!;
+    
+    const session = await stripe.checkout.sessions.create({
+      mode: "subscription",
+      payment_method_types: ["card"],
+      line_items: [{ price: priceId, quantity: 1 }],
+      customer_email: req.user.email, // prefills email on Stripe checkout
+      success_url: `${process.env.FRONTEND_URL}/student-subscribe/confirmation?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${process.env.FRONTEND_URL}/student-subscribe`,
+      metadata: {
+        userId: req.user.userId.toString(),
+        userEmail: req.user.email,
+      },
+    });
+
+    res.json({ url: session.url });
+  })
+);
+app.get(
+  "/subscriptions/verify-session",
   authenticateToken,
-  asyncHandler(async (req: Request, res: Response) => {
-    if (!req.user) {
-      return res.status(401).json({ error: "Unauthorized" });
-    }
+  asyncHandler(async (req, res) => {
+    const sessionId = req.query.session_id as string;
+    if (!sessionId) return res.status(400).json({ error: "Missing session_id" });
 
-    // Get user email
-    const userResult = await query("SELECT email FROM users WHERE id = $1", [req.user.userId]);
-    if (userResult.rows.length === 0) {
-      return res.status(404).json({ error: "User not found" });
-    }
+    const session = await stripe.checkout.sessions.retrieve(sessionId);
 
-    const customerEmail = userResult.rows[0].email;
-
-    try {
-      const session = await stripe.checkout.sessions.create({
-        mode: "subscription",
-        payment_method_types: ["card"],
-        customer_email: customerEmail,
-        line_items: [
-          {
-            price_data: {
-              currency: "usd",
-              product_data: {
-                name: "YPropel Student Mini-Courses Subscription",
-                description: "Monthly subscription for premium mini-course access",
-              },
-              unit_amount: 499, // $4.99 in cents
-              recurring: {
-                interval: "month",
-              },
-            },
-            quantity: 1,
-          },
-        ],
-        success_url: "https://www.ypropel.com/student-checkout-success?session_id={CHECKOUT_SESSION_ID}",
-        cancel_url: "https://www.ypropel.com/student-subscription-cancel",
-      });
-
-      res.json({ url: session.url });
-    } catch (error) {
-      console.error("Stripe Checkout Error:", error);
-      res.status(500).json({ error: "Failed to create checkout session" });
+    if (session.payment_status === "paid" && session.status === "complete") {
+      // Optionally: Update user is_premium flag in DB here or via webhook
+      return res.json({ status: "complete" });
+    } else {
+      return res.json({ status: "incomplete" });
     }
   })
 );
-
 
 // Test route to confirm payment
 app.post(

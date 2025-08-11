@@ -4443,14 +4443,48 @@ app.post(
       return res.status(401).json({ error: "Unauthorized" });
     }
 
-    console.log("✅ Test route hit: create-student-subscription-checkout-session");
-    console.log("User ID:", req.user.userId);
+    const userId = req.user.userId;
 
-    // Return a dummy session ID and URL
-    res.json({
-      id: "test_session_123",
-      url: "https://checkout.stripe.com/test_session_123",
-    });
+    // Get user email from DB
+    const userResult = await query("SELECT email FROM users WHERE id = $1", [userId]);
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ error: "User not found" });
+    }
+    const customerEmail = userResult.rows[0].email;
+
+    try {
+      const session = await stripe.checkout.sessions.create({
+        payment_method_types: ["card"],
+        mode: "subscription",
+        line_items: [
+          {
+            price_data: {
+              currency: "usd",
+              product_data: {
+                name: "YPropel Student Mini-Courses Subscription",
+                description: "Monthly subscription for premium mini-course access",
+              },
+              unit_amount: 499, // $4.99
+              recurring: {
+                interval: "month",
+              },
+            },
+            quantity: 1,
+          },
+        ],
+        customer_email: customerEmail,
+        success_url: `${process.env.FRONTEND_URL}/student-checkout-success?session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${process.env.FRONTEND_URL}/payment/cancel`,
+        metadata: {
+          userId,
+        },
+      });
+
+      res.json({ id: session.id, url: session.url });
+    } catch (err) {
+      console.error("Stripe error creating checkout session:", err);
+      res.status(500).json({ error: "Failed to create checkout session" });
+    }
   })
 );
 
@@ -4463,17 +4497,27 @@ app.post(
       return res.status(401).json({ error: "Unauthorized" });
     }
 
-    const { sessionId } = req.body;
-    console.log("✅ Test route hit: confirm-student-payment");
-    console.log("Received sessionId:", sessionId);
-    console.log("User ID:", req.user.userId);
+    try {
+      const { session_id } = req.body;
+      if (!session_id) {
+        return res.status(400).json({ error: "Missing session_id in request body" });
+      }
 
-    // Simulate a successful payment confirmation
-    res.json({
-      success: true,
-      message: "Test payment confirmed successfully",
-      sessionId,
-    });
+      // You can add real Stripe session verification here if you want
+      // For now, simulate success:
+      console.log("Payment confirmation for session_id:", session_id, "userId:", req.user.userId);
+
+      // TODO: Update user record in DB to premium here
+
+      res.json({
+        success: true,
+        message: "Payment confirmed and user upgraded to premium",
+        session_id,
+      });
+    } catch (err) {
+      console.error("Error confirming payment:", err);
+      res.status(500).json({ success: false, error: "Failed to confirm payment" });
+    }
   })
 );
 

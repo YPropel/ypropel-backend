@@ -66,7 +66,16 @@ const corsOptions = {
 const app = express();
 
 app.use(cors(corsOptions));
-app.use(express.json());
+//app.use(express.json());
+
+app.use((req, res, next) => {
+  if (req.originalUrl === "/webhooks/stripe") {
+    next(); // Skip JSON parsing for Stripe webhook
+  } else {
+    express.json()(req, res, next); // Parse JSON for all other routes
+  }
+});
+
 
 app.use("/admin", adminRoutes); //--adminbackendroute
 
@@ -4492,6 +4501,30 @@ app.post(
 
     res.json({ success: true, user: result.rows[0] });
   })
+);
+//---------------
+
+app.post(
+  "/webhooks/stripe",
+  express.raw({ type: "application/json" }),
+  async (req, res) => {
+    const sig = req.headers["stripe-signature"];
+    const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET!;
+
+    let event: Stripe.Event;
+
+    try {
+      event = stripe.webhooks.constructEvent(req.body, sig!, webhookSecret);
+    } catch (err: any) {
+      console.error("Webhook signature verification failed:", err.message);
+      res.status(400).send(`Webhook Error: ${err.message}`);
+      return; // <-- just return here, don't return the res call
+    }
+
+    // handle events...
+
+    res.json({ received: true }); // also no return needed here
+  }
 );
 
 

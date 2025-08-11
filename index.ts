@@ -4443,15 +4443,6 @@ app.post(
       return res.status(401).json({ error: "Unauthorized" });
     }
 
-    const userId = req.user.userId;
-
-    // Get user email from DB
-    const userResult = await query("SELECT email FROM users WHERE id = $1", [userId]);
-    if (userResult.rows.length === 0) {
-      return res.status(404).json({ error: "User not found" });
-    }
-    const customerEmail = userResult.rows[0].email;
-
     try {
       const session = await stripe.checkout.sessions.create({
         payment_method_types: ["card"],
@@ -4460,11 +4451,11 @@ app.post(
           {
             price_data: {
               currency: "usd",
+              unit_amount: 499, // $4.99 in cents
               product_data: {
                 name: "YPropel Student Mini-Courses Subscription",
                 description: "Monthly subscription for premium mini-course access",
               },
-              unit_amount: 499, // $4.99
               recurring: {
                 interval: "month",
               },
@@ -4472,21 +4463,21 @@ app.post(
             quantity: 1,
           },
         ],
-        customer_email: customerEmail,
-       success_url: "https://www.ypropel.com/payment/success?session_id={CHECKOUT_SESSION_ID}",
+        success_url: "https://www.ypropel.com/payment/success?session_id={CHECKOUT_SESSION_ID}",
         cancel_url: "https://www.ypropel.com/payment/cancel",
         metadata: {
-          userId: req.user.userId, // store user ID for reference
+          userId: req.user.userId, // store user ID for later
         },
       });
 
       res.json({ id: session.id, url: session.url });
-    } catch (err) {
-      console.error("Stripe error creating checkout session:", err);
+    } catch (error) {
+      console.error("Stripe Checkout Error:", error);
       res.status(500).json({ error: "Failed to create checkout session" });
     }
   })
 );
+
 
 // Test route to confirm payment
 app.post(

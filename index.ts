@@ -4391,45 +4391,34 @@ app.post(
   "/payment/create-student-subscription-checkout-session",
   authenticateToken,
   asyncHandler(async (req: Request, res: Response) => {
-    if (!req.user) {
-      return res.status(401).json({ error: "Unauthorized" });
+    const userId = (req.user as { userId: number }).userId;
+
+    // Fetch user email from DB
+    const userResult = await query("SELECT email FROM users WHERE id = $1", [userId]);
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ error: "User not found" });
     }
 
-    try {
-      const session = await stripe.checkout.sessions.create({
-        payment_method_types: ["card"],
-        mode: "subscription",
-        line_items: [
-          {
-            price_data: {
-              currency: "usd",
-              unit_amount: 499, // $4.99
-              product_data: {
-                name: "YPropel Student Mini-Courses Subscription",
-                description: "Monthly subscription for premium mini-course access",
-              },
-              recurring: {
-                interval: "month",
-              },
-            },
-            quantity: 1,
-          },
-        ],
-        success_url: `${process.env.FRONTEND_URL}/payment/success?session_id={CHECKOUT_SESSION_ID}`,
-        cancel_url: `${process.env.FRONTEND_URL}/payment/cancel`,
-        metadata: {
-          userId: req.user.userId, // store user ID for later
+    const customerEmail = userResult.rows[0].email;
+
+    // Create Stripe Checkout session
+    const session = await stripe.checkout.sessions.create({
+      mode: "subscription",
+      payment_method_types: ["card"],
+      customer_email: customerEmail,
+      line_items: [
+        {
+          price: process.env.STRIPE_STUDENT_SUBSCRIPTION_PRICE_ID, // your Stripe Price ID for student subscription
+          quantity: 1,
         },
-      });
+      ],
+      success_url: "https://www.ypropel.com/student-checkout-success?session_id={CHECKOUT_SESSION_ID}",
+      cancel_url: "https://www.ypropel.com/student-subscription-cancel",
+    });
 
-      res.json({ id: session.id, url: session.url });
-    } catch (error) {
-      console.error("Stripe Checkout Error:", error);
-      res.status(500).json({ error: "Failed to create checkout session" });
-    }
+    res.json({ url: session.url });
   })
 );
-
 
 
 //------route to confirm  subscription payment done on stripe so make user premium

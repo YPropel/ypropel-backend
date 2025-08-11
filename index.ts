@@ -4473,10 +4473,10 @@ app.post(
           },
         ],
         customer_email: customerEmail,
-        success_url: `${process.env.FRONTEND_URL}/student-checkout-success?session_id={CHECKOUT_SESSION_ID}`,
-        cancel_url: `${process.env.FRONTEND_URL}/payment/cancel`,
+       success_url: "https://www.ypropel.com/payment/success?session_id={CHECKOUT_SESSION_ID}",
+        cancel_url: "https://www.ypropel.com/payment/cancel",
         metadata: {
-          userId,
+          userId: req.user.userId, // store user ID for reference
         },
       });
 

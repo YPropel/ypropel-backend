@@ -69,8 +69,8 @@ app.use(cors(corsOptions));
 //app.use(express.json());
 
 app.use((req, res, next) => {
-  console.log(`${req.method} ${req.originalUrl}`); // log first
-
+ const fullUrl = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
+  console.log(`${req.method} ${fullUrl}`);
   if (req.originalUrl === "/webhooks/stripe") {
     next(); // Skip JSON parsing for Stripe webhook
   } else {

@@ -69,12 +69,14 @@ app.use(cors(corsOptions));
 //app.use(express.json());
 
 app.use((req, res, next) => {
+  console.log(`${req.method} ${req.originalUrl}`); // log first
+
   if (req.originalUrl === "/webhooks/stripe") {
     next(); // Skip JSON parsing for Stripe webhook
   } else {
     express.json()(req, res, next); // Parse JSON for all other routes
   }
-   console.log(`${req.method} ${req.originalUrl}`);
+  
 });
 
 

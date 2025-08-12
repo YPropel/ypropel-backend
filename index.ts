@@ -4332,7 +4332,7 @@ app.get(
     }
   })
 );
-//-------Payment for jobs 
+//-------Payment for jobs ---------
 //----------allow company users pay per job post
 app.post(
   "/payment/create-checkout-session",
@@ -4361,13 +4361,13 @@ app.post(
     res.json({ url: session.url });
   })
 );
-//--------
+//-------------allow companies to subscribe to premium package-
 app.post(
   "/payment/create-subscription-checkout-session",
   authenticateToken,
   asyncHandler(async (req: Request, res: Response) => {
-   const userId = (req.user as { userId: number }).userId;
-   console.log("USEr IDDDDDdd:", userId);
+    const userId = (req.user as { userId: number }).userId;
+    console.log("User ID:", userId);
     // Get user email
     const userResult = await query("SELECT email FROM users WHERE id = $1", [userId]);
     if (userResult.rows.length === 0) {
@@ -4383,21 +4383,66 @@ app.post(
       customer_email: customerEmail,
       line_items: [
         {
-          price: process.env.STRIPE_SUBSCRIPTION_PRICE_ID, // Use your actual Price ID
+          price: process.env.STRIPE_SUBSCRIPTION_PRICE_ID!, // Use your actual Price ID
           quantity: 1,
         },
       ],
       success_url: "https://www.ypropel.com/subscription-success",
       cancel_url: "https://www.ypropel.com/postjob",
+      metadata: {
+        userId: userId.toString(),
+        subscriptionType: "company",  // Mark subscription as company type
+      },
     });
 
     res.json({ url: session.url });
   })
 );
 
+//--------allow companies to cancel premium subscriptions
+app.post(
+  "/payment/cancel-subscription",
+  authenticateToken,
+  asyncHandler(async (req: Request, res: Response) => {
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+
+    // Find the Stripe subscription ID for this user’s company subscription
+    const userResult = await query(
+      "SELECT company_subscription_id FROM users WHERE id = $1",
+      [userId]
+    );
+
+    if (userResult.rows.length === 0 || !userResult.rows[0].company_subscription_id) {
+      return res.status(404).json({ error: "Company subscription not found" });
+    }
+
+    const subscriptionId = userResult.rows[0].company_subscription_id;
+
+    try {
+      // Cancel subscription immediately at Stripe
+      await stripe.subscriptions.del(subscriptionId);
+
+      // Update user in DB: clear company subscription info and unset is_company_premium
+      await query(
+        `UPDATE users
+         SET company_subscription_id = NULL,
+             company_subscription_status = NULL,
+             is_company_premium = FALSE
+         WHERE id = $1`,
+        [userId]
+      );
+
+      res.json({ message: "Company subscription canceled successfully" });
+    } catch (error) {
+      console.error("Error canceling company subscription:", error);
+      res.status(500).json({ error: "Failed to cancel company subscription" });
+    }
+  })
+);
 //--------------end of companies profiles routes----------------
 //-------------------------------------------------
-//------Routes for students Members subscriptions (Premium)-------------------------
+//------Routes for students (Members) subscriptions (Premium)-------------------------
 
 app.post(
   "/payment/create-student-subscription-checkout-session",
@@ -4433,7 +4478,7 @@ app.post(
 );
 
 
-//------route to confirm  subscription payment done on stripe so make user premium
+//------route to confirm  students subscription payment done on stripe so make user premium
 // Route to confirm payment and update user status
 // Test route to create checkout session
 app.post(
@@ -4491,7 +4536,7 @@ app.post(
     res.json({ url: session.url });
   })
 );
-//---------
+//------verify subscription for students---
 app.get(
   "/subscriptions/verify-session",
   authenticateToken,
@@ -4534,12 +4579,44 @@ app.post(
     res.json({ success: true, user: result.rows[0] });
   })
 );
-//---------------
+
+// Cancel Stripe subscription for students 
+app.post(
+  "/stripe/cancel-subscription",
+  authenticateToken,
+  asyncHandler(async (req: Request, res: Response) => {
+    const { subscriptionId } = req.body;
+
+    if (!subscriptionId) {
+      return res.status(400).json({ error: "Subscription ID is required" });
+    }
+
+    try {
+      // Cancel at period end
+      const canceledSubscription = await stripe.subscriptions.update(
+        subscriptionId,
+        { cancel_at_period_end: true }
+      );
+
+      res.json({
+        message: "Subscription cancellation scheduled",
+        subscription: canceledSubscription,
+      });
+    } catch (error) {
+      console.error("Stripe cancellation error:", error);
+      res.status(500).json({ error: "Failed to cancel subscription" });
+    }
+  })
+);
+
+//----------End of students subscription to premium routes-----
+//--------------------------------------------------------
+//_____Webhook for stripe to capture subscriptions and cancelations
 const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET!;
 
 app.post(
   "/webhooks/stripe",
-  express.raw({ type: "application/json" }), // raw body for webhook signature verification
+  express.raw({ type: "application/json" }),
   async (req: Request, res: Response) => {
     const sig = req.headers["stripe-signature"];
 
@@ -4579,23 +4656,40 @@ app.post(
           }
 
           const userId = userResult.rows[0].id;
-
-          // Determine if subscription is active/trialing for is_premium flag
           const isActive = subscription.status === "active" || subscription.status === "trialing";
 
-          // Update user's subscription info in DB
-          await query(
-            `UPDATE users
-             SET subscription_id = $1,
-                 subscription_status = $2,
-                 is_premium = $3
-             WHERE id = $4`,
-            [subscription.id, subscription.status, isActive, userId]
-          );
+          // Determine subscription type from metadata
+          const subscriptionType = subscription.metadata?.subscriptionType || "student";
 
-          console.log(
-            `Updated user ${userId} subscription_id=${subscription.id}, status=${subscription.status}, is_premium=${isActive}`
-          );
+          if (subscriptionType === "company") {
+            // Update company subscription fields
+            await query(
+              `UPDATE users
+               SET company_subscription_id = $1,
+                   company_subscription_status = $2,
+                   is_company_premium = $3
+               WHERE id = $4`,
+              [subscription.id, subscription.status, isActive, userId]
+            );
+
+            console.log(
+              `Updated company subscription for user ${userId}: id=${subscription.id}, status=${subscription.status}, is_company_premium=${isActive}`
+            );
+          } else {
+            // Default: update student subscription fields
+            await query(
+              `UPDATE users
+               SET subscription_id = $1,
+                   subscription_status = $2,
+                   is_premium = $3
+               WHERE id = $4`,
+              [subscription.id, subscription.status, isActive, userId]
+            );
+
+            console.log(
+              `Updated student subscription for user ${userId}: id=${subscription.id}, status=${subscription.status}, is_premium=${isActive}`
+            );
+          }
           break;
 
         default:
@@ -4607,40 +4701,11 @@ app.post(
       return;
     }
 
-    // Acknowledge receipt of the event
     res.status(200).send("Received");
   }
 );
 
 
-// Cancel Stripe subscription
-app.post(
-  "/stripe/cancel-subscription",
-  authenticateToken,
-  asyncHandler(async (req: Request, res: Response) => {
-    const { subscriptionId } = req.body;
-
-    if (!subscriptionId) {
-      return res.status(400).json({ error: "Subscription ID is required" });
-    }
-
-    try {
-      // Cancel at period end
-      const canceledSubscription = await stripe.subscriptions.update(
-        subscriptionId,
-        { cancel_at_period_end: true }
-      );
-
-      res.json({
-        message: "Subscription cancellation scheduled",
-        subscription: canceledSubscription,
-      });
-    } catch (error) {
-      console.error("Stripe cancellation error:", error);
-      res.status(500).json({ error: "Failed to cancel subscription" });
-    }
-  })
-);
 
 
 //---------------------------------------------------------------

@@ -591,9 +591,9 @@ if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
    const result = await query(
   `SELECT id, name, email, title, university, major, experience_level, skills, company,
-   courses_completed, country, birthdate, volunteering_work, projects_completed, photo_url,
-   is_premium
-   FROM users WHERE id = $1`,
+       courses_completed, country, birthdate, volunteering_work, projects_completed, photo_url,
+       is_premium, subscription_id
+       FROM users  WHERE id = $1`,
   [userId]
 );
 
@@ -4506,74 +4506,63 @@ app.post(
 const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET!;
 
 app.post(
-  "/webhooks/stripe",
-  express.raw({ type: "application/json" }), // raw body for webhook signature verification
-  async (req: Request, res: Response) => {
-    const sig = req.headers["stripe-signature"];
-
-    if (!sig) {
-      console.error("Missing Stripe signature");
-      res.status(400).send("Missing Stripe signature");
-      return;
-    }
+  "/webhook",
+  express.raw({ type: "application/json" }), // Stripe requires raw body
+  asyncHandler(async (req: Request, res: Response) => {
+    const sig = req.headers["stripe-signature"] as string;
 
     let event: Stripe.Event;
 
     try {
-      event = stripe.webhooks.constructEvent(req.body, sig, webhookSecret);
+      event = stripe.webhooks.constructEvent(
+        req.body,
+        sig,
+        process.env.STRIPE_WEBHOOK_SECRET as string
+      );
     } catch (err: any) {
       console.error("Webhook signature verification failed:", err.message);
-      res.status(400).send(`Webhook Error: ${err.message}`);
-      return;
+      return res.status(400).send(`Webhook Error: ${err.message}`);
     }
 
-    try {
-      switch (event.type) {
-        case "customer.subscription.created":
-        case "customer.subscription.updated":
-        case "customer.subscription.deleted":
-          const subscription = event.data.object as Stripe.Subscription;
-          const customerId = subscription.customer as string;
+    switch (event.type) {
+      case "checkout.session.completed": {
+        const session = event.data.object as Stripe.Checkout.Session;
+        const customerEmail = session.customer_email;
+        const subscriptionId = session.subscription; // The Stripe subscription ID
 
-          // Lookup user by Stripe customer ID in your DB
-          const userResult = await query(
-            "SELECT id FROM users WHERE stripe_customer_id = $1",
-            [customerId]
+        if (customerEmail && subscriptionId) {
+          await query(
+            `UPDATE users
+             SET is_premium = true, subscription_id = $1
+             WHERE email = $2`,
+            [subscriptionId, customerEmail]
           );
-
-          if (userResult.rows.length === 0) {
-            console.warn(`User not found for customer ID: ${customerId}`);
-            break; // no user to update
-          }
-
-          const userId = userResult.rows[0].id;
-
-          // Determine is_premium status based on subscription status
-          const isActive = subscription.status === "active" || subscription.status === "trialing";
-          // Update user's is_premium in DB
-          await query("UPDATE users SET is_premium = $1 WHERE id = $2", [
-            isActive,
-            userId,
-          ]);
-
-          console.log(
-            `Updated user ${userId} is_premium to ${isActive} due to subscription event ${event.type}`
-          );
-          break;
-
-        // Handle other relevant events as needed
-        default:
-          console.log(`Unhandled event type: ${event.type}`);
+          console.log(`User ${customerEmail} set to premium with subscription ID ${subscriptionId}`);
+        }
+        break;
       }
-    } catch (err) {
-      console.error("Error processing webhook event:", err);
-      res.status(500).send("Internal Server Error");
-      return;
+
+      case "customer.subscription.deleted": {
+        const subscription = event.data.object as Stripe.Subscription;
+        const subscriptionId = subscription.id;
+
+        // Clear premium if subscription is canceled
+        await query(
+          `UPDATE users
+           SET is_premium = false, subscription_id = NULL
+           WHERE subscription_id = $1`,
+          [subscriptionId]
+        );
+        console.log(`Subscription ${subscriptionId} canceled, premium removed`);
+        break;
+      }
+
+      default:
+        console.log(`Unhandled event type ${event.type}`);
     }
 
-    // Acknowledge receipt of the event
-    res.status(200).send("Received");
-  }
+    res.json({ received: true });
+  })
 );
 
 // Cancel Stripe subscription

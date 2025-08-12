@@ -4438,22 +4438,50 @@ app.post(
 // Test route to create checkout session
 app.post(
   "/subscriptions/create-checkout-session",
-  authenticateToken, // Your auth middleware
+  authenticateToken,
   asyncHandler(async (req, res) => {
     if (!req.user) return res.status(401).json({ error: "Unauthorized" });
 
-    // Your Stripe product price ID for the student monthly subscription
-    const priceId = process.env.STRIPE_MINI_COURSE_PRICE_ID!;
+    // Fetch existing stripe_customer_id for user
+    const userResult = await query(
+      "SELECT stripe_customer_id FROM users WHERE id = $1",
+      [req.user.userId]
+    );
 
-    
+    let stripeCustomerId = userResult.rows[0]?.stripe_customer_id;
+
+    // Create Stripe customer if not exists
+    if (!stripeCustomerId) {
+      const customer = await stripe.customers.create({
+        email: req.user.email,
+        metadata: {
+          userId: req.user.userId.toString(),
+        },
+      });
+      stripeCustomerId = customer.id;
+
+      // Save stripe_customer_id in users table
+      await query(
+        "UPDATE users SET stripe_customer_id = $1 WHERE id = $2",
+        [stripeCustomerId, req.user.userId]
+      );
+    }
+
+    // Stripe price ID from env
+    const priceId = process.env.STRIPE_MINI_COURSE_PRICE_ID!;
+    if (!priceId) {
+      return res.status(500).json({ error: "Missing Stripe price ID configuration" });
+    }
+
+    // Create checkout session
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
       payment_method_types: ["card"],
       line_items: [{ price: priceId, quantity: 1 }],
-      customer_email: req.user.email, // prefills email on Stripe checkout
-      success_url: "https://www.ypropel.com/student-subscribe/confirmation?session_id={CHECKOUT_SESSION_ID}",
-cancel_url: "https://www.ypropel.com/student-subscribe",
-
+      customer: stripeCustomerId,
+      success_url:
+        "https://www.ypropel.com/student-subscribe/confirmation?session_id={CHECKOUT_SESSION_ID}",
+      cancel_url: "https://www.ypropel.com/student-subscribe",
       metadata: {
         userId: req.user.userId.toString(),
         userEmail: req.user.email,
@@ -4463,6 +4491,7 @@ cancel_url: "https://www.ypropel.com/student-subscribe",
     res.json({ url: session.url });
   })
 );
+//---------
 app.get(
   "/subscriptions/verify-session",
   authenticateToken,

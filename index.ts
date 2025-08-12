@@ -74,6 +74,7 @@ app.use((req, res, next) => {
   } else {
     express.json()(req, res, next); // Parse JSON for all other routes
   }
+   console.log(`${req.method} ${req.originalUrl}`);
 });
 
 

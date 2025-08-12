@@ -595,8 +595,8 @@ if (!userId) return res.status(401).json({ error: "Unauthorized" });
    const result = await query(
   `SELECT id, name, email, title, university, major, experience_level, skills, company,
        courses_completed, country, birthdate, volunteering_work, projects_completed, photo_url,
-       is_premium, subscription_id
-       FROM users  WHERE id = $1`,
+       is_premium, is_company_premium, subscription_id
+   FROM users    WHERE id = $1`,
   [userId]
 );
 

@@ -4526,6 +4526,34 @@ app.post(
     res.json({ received: true }); // also no return needed here
   }
 );
+// Cancel Stripe subscription
+app.post(
+  "/stripe/cancel-subscription",
+  authenticateToken,
+  asyncHandler(async (req: Request, res: Response) => {
+    const { subscriptionId } = req.body;
+
+    if (!subscriptionId) {
+      return res.status(400).json({ error: "Subscription ID is required" });
+    }
+
+    try {
+      // Cancel at period end
+      const canceledSubscription = await stripe.subscriptions.update(
+        subscriptionId,
+        { cancel_at_period_end: true }
+      );
+
+      res.json({
+        message: "Subscription cancellation scheduled",
+        subscription: canceledSubscription,
+      });
+    } catch (error) {
+      console.error("Stripe cancellation error:", error);
+      res.status(500).json({ error: "Failed to cancel subscription" });
+    }
+  })
+);
 
 
 //---------------------------------------------------------------

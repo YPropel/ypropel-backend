@@ -4506,26 +4506,75 @@ app.post(
 
 app.post(
   "/webhooks/stripe",
-  express.raw({ type: "application/json" }),
-  async (req, res) => {
+  express.raw({ type: "application/json" }), // raw body for webhook signature verification
+  async (req: Request, res: Response) => {
     const sig = req.headers["stripe-signature"];
-    const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET!;
+
+    if (!sig) {
+      console.error("Missing Stripe signature");
+      res.status(400).send("Missing Stripe signature");
+      return;
+    }
 
     let event: Stripe.Event;
 
     try {
-      event = stripe.webhooks.constructEvent(req.body, sig!, webhookSecret);
+      event = stripe.webhooks.constructEvent(req.body, sig, webhookSecret);
     } catch (err: any) {
       console.error("Webhook signature verification failed:", err.message);
       res.status(400).send(`Webhook Error: ${err.message}`);
-      return; // <-- just return here, don't return the res call
+      return;
     }
 
-    // handle events...
+    try {
+      switch (event.type) {
+        case "customer.subscription.created":
+        case "customer.subscription.updated":
+        case "customer.subscription.deleted":
+          const subscription = event.data.object as Stripe.Subscription;
+          const customerId = subscription.customer as string;
 
-    res.json({ received: true }); // also no return needed here
+          // Lookup user by Stripe customer ID in your DB
+          const userResult = await query(
+            "SELECT id FROM users WHERE stripe_customer_id = $1",
+            [customerId]
+          );
+
+          if (userResult.rows.length === 0) {
+            console.warn(`User not found for customer ID: ${customerId}`);
+            break; // no user to update
+          }
+
+          const userId = userResult.rows[0].id;
+
+          // Determine is_premium status based on subscription status
+          const isActive = subscription.status === "active" || subscription.status === "trialing";
+          // Update user's is_premium in DB
+          await query("UPDATE users SET is_premium = $1 WHERE id = $2", [
+            isActive,
+            userId,
+          ]);
+
+          console.log(
+            `Updated user ${userId} is_premium to ${isActive} due to subscription event ${event.type}`
+          );
+          break;
+
+        // Handle other relevant events as needed
+        default:
+          console.log(`Unhandled event type: ${event.type}`);
+      }
+    } catch (err) {
+      console.error("Error processing webhook event:", err);
+      res.status(500).send("Internal Server Error");
+      return;
+    }
+
+    // Acknowledge receipt of the event
+    res.status(200).send("Received");
   }
 );
+
 // Cancel Stripe subscription
 app.post(
   "/stripe/cancel-subscription",

@@ -4503,6 +4503,7 @@ app.post(
   })
 );
 //---------------
+const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET!;
 
 app.post(
   "/webhooks/stripe",

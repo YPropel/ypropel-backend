@@ -4160,7 +4160,6 @@ app.get(
     res.json(result.rows);
   })
 ); 
-//--------------Allow companies to post jobs for free or paid
 app.post(
   "/companies/post-job",
   authenticateToken,
@@ -4195,42 +4194,50 @@ app.post(
       return res.status(400).json({ error: "Invalid plan type." });
     }
 
-    // Validate location
     const ALLOWED_LOCATIONS = ["Remote", "Onsite", "Hybrid"];
     if (!ALLOWED_LOCATIONS.includes(location)) {
       return res.status(400).json({ error: "Invalid location value. Allowed: Remote, Onsite, Hybrid" });
     }
 
+    // Get company info
     const companyResult = await query("SELECT id, name FROM companies WHERE user_id = $1", [posted_by]);
     if (companyResult.rows.length === 0) {
       return res.status(400).json({ error: "User is not associated with a company." });
     }
-
     const { id: company_id, name: companyName } = companyResult.rows[0];
 
-    // Restrict free plan to only one active job
-    if (planType === "free") {
+    // Fetch company premium status from users table
+    const userResult = await query(
+      "SELECT is_company_premium FROM users WHERE id = $1",
+      [posted_by]
+    );
+    const isCompanyPremium = userResult.rows[0]?.is_company_premium ?? false;
+
+    // Restrict free plan to only one active job if NOT premium
+    if (planType === "free" && !isCompanyPremium) {
       const existingJob = await query(
-        "SELECT id FROM jobs WHERE company_id = $1 AND is_active = true",
+        "SELECT id FROM jobs WHERE company_id = $1 AND is_active = true AND plan_type = 'free'",
         [company_id]
       );
       if (existingJob.rows.length > 0) {
-        return res.status(400).json({ error: "You can have only one active free job post under the free plan. Delete current post or switch to paid plan" });
+        return res.status(400).json({
+          error:
+            "You can have only one active free job post under the free plan. Delete current post or switch to paid plan.",
+        });
       }
     }
 
     // Set expiration based on plan type
     let expiresAt: Date | null = null;
-      const now = new Date();
+    const now = new Date();
 
-      if (planType === "free") {
-        expiresAt = new Date(now.getTime() + 2 * 24 * 60 * 60 * 1000); // 2 days
-      } else if (planType === "pay_per_post") {
-        expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000); // 30 days
-      } else if (planType === "subscription") {
-        expiresAt = null; // No expiration for subscription jobs
-      }
-
+    if (planType === "free") {
+      expiresAt = new Date(now.getTime() + 2 * 24 * 60 * 60 * 1000); // 2 days
+    } else if (planType === "pay_per_post") {
+      expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000); // 30 days
+    } else if (planType === "subscription") {
+      expiresAt = null; // No expiration for subscription jobs
+    }
 
     try {
       const result = await query(

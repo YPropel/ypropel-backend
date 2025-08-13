@@ -4368,6 +4368,7 @@ app.post(
   asyncHandler(async (req: Request, res: Response) => {
     const userId = (req.user as { userId: number }).userId;
     console.log("User ID:", userId);
+
     // Get user email
     const userResult = await query("SELECT email FROM users WHERE id = $1", [userId]);
     if (userResult.rows.length === 0) {
@@ -4376,7 +4377,7 @@ app.post(
 
     const customerEmail = userResult.rows[0].email;
 
-    // Create Stripe Checkout session
+    // Create Stripe Checkout session with subscription metadata
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
       payment_method_types: ["card"],
@@ -4387,17 +4388,20 @@ app.post(
           quantity: 1,
         },
       ],
+      subscription_data: {
+        metadata: {
+          userId: userId.toString(),
+          subscriptionType: "company", // now stored on subscription object
+        },
+      },
       success_url: "https://www.ypropel.com/subscription-success",
       cancel_url: "https://www.ypropel.com/postjob",
-      metadata: {
-        userId: userId.toString(),
-        subscriptionType: "company",  // Mark subscription as company type
-      },
     });
 
     res.json({ url: session.url });
   })
 );
+
 
 //--------allow companies to cancel premium subscriptions
 app.post(

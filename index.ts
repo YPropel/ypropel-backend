@@ -4402,6 +4402,27 @@ app.post(
   })
 );
 
+app.post(
+  "/users/set-company-premium",
+  authenticateToken, // checks JWT, populates req.user
+  asyncHandler(async (req, res) => {
+    const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const result = await query(
+      "UPDATE users SET is_company_premium = TRUE WHERE id = $1 RETURNING id, is_company_premium",
+      [userId]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    res.json({ success: true, user: result.rows[0] });
+  })
+);
 
 //--------allow companies to cancel premium subscriptions
 app.post(

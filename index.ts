@@ -4386,7 +4386,7 @@ app.post(
     if (!stripeCustomerId) {
       const customer = await stripe.customers.create({ email: customerEmail });
       stripeCustomerId = customer.id;
-      await query("UPDATE users SET company_subscription_id = $1 WHERE id = $2", [stripeCustomerId, userId]);
+      await query("UPDATE users SET stripe_customer_id = $1 WHERE id = $2", [stripeCustomerId, userId]);
     }
 
     const session = await stripe.checkout.sessions.create({
@@ -4698,49 +4698,49 @@ app.post(
           // Determine subscription type from metadata
           const subscriptionType = subscription.metadata?.subscriptionType || "student";
 
-          if (subscriptionType === "company") {
-            // Update company subscription fields
-            await query(
-              `UPDATE users
-               SET company_id = $1,
-                   company_subscription_status = $2,
-                   is_company_premium = $3
-               WHERE id = $4`,
-              [subscription.id, subscription.status, isActive, userId]
-            );
+         if (subscriptionType === "company") {
+              // Update company subscription fields
+              await query(
+                `UPDATE users
+                  SET company_subscription_id = $1,
+                      company_subscription_status = $2,
+                      is_company_premium = $3
+                  WHERE id = $4`,
+                [subscription.id, subscription.status, isActive, userId]
+              );
 
-            console.log(
-              `Updated company subscription for user ${userId}: id=${subscription.id}, status=${subscription.status}, is_company_premium=${isActive}`
-            );
-          } else {
-            // Default: update student subscription fields
-            await query(
-              `UPDATE users
-               SET subscription_id = $1,
-                   subscription_status = $2,
-                   is_premium = $3
-               WHERE id = $4`,
-              [subscription.id, subscription.status, isActive, userId]
-            );
+                  console.log(
+                    `Updated company subscription for user ${userId}: subscription_id=${subscription.id}, status=${subscription.status}, is_company_premium=${isActive}`
+                  );
+                } else {
+                  // Default: update student subscription fields
+                  await query(
+                    `UPDATE users
+                      SET subscription_id = $1,
+                          subscription_status = $2,
+                          is_premium = $3
+                      WHERE id = $4`,
+                    [subscription.id, subscription.status, isActive, userId]
+                  );
 
-            console.log(
-              `Updated student subscription for user ${userId}: id=${subscription.id}, status=${subscription.status}, is_premium=${isActive}`
-            );
+                  console.log(
+                    `Updated student subscription for user ${userId}: subscription_id=${subscription.id}, status=${subscription.status}, is_premium=${isActive}`
+                  );
+                }
+                break;
+
+                default:
+                  console.log(`Unhandled event type: ${event.type}`);
+              }
+            } catch (err) {
+              console.error("Error processing webhook event:", err);
+              res.status(500).send("Internal Server Error");
+              return;
+            }
+
+            res.status(200).send("Received");
           }
-          break;
-
-        default:
-          console.log(`Unhandled event type: ${event.type}`);
-      }
-    } catch (err) {
-      console.error("Error processing webhook event:", err);
-      res.status(500).send("Internal Server Error");
-      return;
-    }
-
-    res.status(200).send("Received");
-  }
-);
+        );
 
 
 

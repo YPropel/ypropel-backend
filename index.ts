@@ -4375,7 +4375,7 @@ app.post(
   asyncHandler(async (req: Request, res: Response) => {
     const userId = (req.user as { userId: number }).userId;
 
-    const userResult = await query("SELECT email, stripe_customer_id FROM users WHERE id = $1", [userId]);
+    const userResult = await query("SELECT email, company_subscription_id FROM users WHERE id = $1", [userId]);
     if (userResult.rows.length === 0) {
       return res.status(404).json({ error: "User not found" });
     }
@@ -4386,7 +4386,7 @@ app.post(
     if (!stripeCustomerId) {
       const customer = await stripe.customers.create({ email: customerEmail });
       stripeCustomerId = customer.id;
-      await query("UPDATE users SET stripe_customer_id = $1 WHERE id = $2", [stripeCustomerId, userId]);
+      await query("UPDATE users SET company_subscription_id = $1 WHERE id = $2", [stripeCustomerId, userId]);
     }
 
     const session = await stripe.checkout.sessions.create({

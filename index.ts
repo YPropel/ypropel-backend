@@ -4374,31 +4374,35 @@ app.post(
   authenticateToken,
   asyncHandler(async (req: Request, res: Response) => {
     const userId = (req.user as { userId: number }).userId;
-    console.log("User ID:", userId);
 
-    // Get user email
-    const userResult = await query("SELECT email FROM users WHERE id = $1", [userId]);
+    const userResult = await query("SELECT email, stripe_customer_id FROM users WHERE id = $1", [userId]);
     if (userResult.rows.length === 0) {
       return res.status(404).json({ error: "User not found" });
     }
 
     const customerEmail = userResult.rows[0].email;
+    let stripeCustomerId = userResult.rows[0].stripe_customer_id;
 
-    // Create Stripe Checkout session with subscription metadata
+    if (!stripeCustomerId) {
+      const customer = await stripe.customers.create({ email: customerEmail });
+      stripeCustomerId = customer.id;
+      await query("UPDATE users SET stripe_customer_id = $1 WHERE id = $2", [stripeCustomerId, userId]);
+    }
+
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
       payment_method_types: ["card"],
-      customer_email: customerEmail,
+      customer: stripeCustomerId,
       line_items: [
         {
-          price: process.env.STRIPE_SUBSCRIPTION_PRICE_ID!, // Use your actual Price ID
+          price: process.env.STRIPE_SUBSCRIPTION_PRICE_ID!,
           quantity: 1,
         },
       ],
       subscription_data: {
         metadata: {
           userId: userId.toString(),
-          subscriptionType: "company", // now stored on subscription object
+          subscriptionType: "company",
         },
       },
       success_url: "https://www.ypropel.com/subscription-success",
@@ -4408,6 +4412,7 @@ app.post(
     res.json({ url: session.url });
   })
 );
+
 
 app.post(
   "/users/set-company-premium",
@@ -4697,7 +4702,7 @@ app.post(
             // Update company subscription fields
             await query(
               `UPDATE users
-               SET company_subscription_id = $1,
+               SET company_id = $1,
                    company_subscription_status = $2,
                    is_company_premium = $3
                WHERE id = $4`,

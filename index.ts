@@ -3578,6 +3578,31 @@ app.get(
     res.json(result.rows);
   })
 );
+//--------get single job detials page
+// ---- Public route: get ONE job by id
+app.get(
+  "/jobs/:id",
+  asyncHandler(async (req: Request, res: Response) => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({ error: "Invalid job id" });
+    }
+
+    const sql = `
+      SELECT jobs.*, us_states.name AS state_name
+      FROM jobs
+      LEFT JOIN us_states ON jobs.state = us_states.abbreviation
+      WHERE jobs.is_active = TRUE AND jobs.id = $1
+      LIMIT 1
+    `;
+    const result = await query(sql, [id]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "Job not found" });
+    }
+    return res.json(result.rows[0]);
+  })
+);
 
 //--------get job categories for the fitler drop down for public 
 app.get(

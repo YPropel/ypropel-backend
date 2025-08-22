@@ -3658,69 +3658,85 @@ app.get(
 );
 
 //------  Admin post articles
+
+function getBaseUrl(req: Request) {
+  const envBase = process.env.PUBLIC_BASE_URL; // e.g. https://api.ypropel.com
+  return envBase || `${req.protocol}://${req.get("host")}`;
+}
 //-- before new edit profile non - but orignal missed
 app.post(
   "/admin/articles",
   authenticateToken,
+  // 👇 this is what was missing
+  upload.single("cover_image"),
   asyncHandler(async (req: Request, res: Response) => {
-    if (!req.user?.isAdmin) {
-      return res.status(403).json({ error: "Admins only" });
-    }
+    if (!req.user?.isAdmin) return res.status(403).json({ error: "Admins only" });
 
-    const { title, content, cover_image } = req.body;
+    // Works for both JSON and multipart:
+    const { title, content } = req.body;
+    if (!title || !content) return res.status(400).json({ error: "Title and content are required" });
 
-    if (!title || !content) {
-      return res.status(400).json({ error: "Title and content are required" });
+    const base = getBaseUrl(req);
+    let coverUrl: string | null = null;
+
+    // Case A: user uploaded a file
+    if (req.file) {
+      coverUrl = `${base}/uploads/${req.file.filename}`;
+    } else {
+      // Case B: user sent a URL in body
+      const raw = (req.body.cover_image || "").trim();
+      if (raw) coverUrl = raw.startsWith("/") ? `${base}${raw}` : raw; // normalize relative to absolute
     }
 
     const result = await query(
       `INSERT INTO articles (title, content, cover_image, author_id, published_at)
        VALUES ($1, $2, $3, $4, NOW()) RETURNING *`,
-      [title, content, cover_image || null, req.user.userId]
+      [title, content, coverUrl, req.user.userId]
     );
 
     res.status(201).json(result.rows[0]);
   })
 );
 
-
-//----- importentry level jobs route-(main route code is in AdminRoutes.tsx-
-//app.use("/admin", adminBackendRouter);
-
-
-//--------Add added articles lists to admin page so they can edit and delete
-
-
+// ------ UPDATE (don't wipe image unless a new one is provided)
 app.put(
   "/admin/articles/:id",
   authenticateToken,
+  upload.single("cover_image"),
   asyncHandler(async (req: Request, res: Response) => {
-    const articleId = parseInt(req.params.id);
-    if (isNaN(articleId)) {
-      return res.status(400).json({ error: "Invalid article ID" });
-    }
+    if (!req.user?.isAdmin) return res.status(403).json({ error: "Admins only" });
 
-    const { title, content, cover_image } = req.body;
+    const articleId = Number(req.params.id);
+    if (Number.isNaN(articleId)) return res.status(400).json({ error: "Invalid article ID" });
 
-    if (!req.user?.isAdmin) {
-      return res.status(403).json({ error: "Admins only" });
-    }
+    const { title, content } = req.body;
+    if (!title || !content) return res.status(400).json({ error: "Title and content are required" });
 
-    if (!title || !content) {
-      return res.status(400).json({ error: "Title and content are required" });
+    const base = getBaseUrl(req);
+
+    // compute newCover if provided; else keep existing
+    let newCover: string | null = null;
+    if (req.file) {
+      newCover = `${base}/uploads/${req.file.filename}`;
+    } else if (typeof req.body.cover_image === "string" && req.body.cover_image.trim() !== "") {
+      newCover = req.body.cover_image.startsWith("/")
+        ? `${base}${req.body.cover_image}`
+        : req.body.cover_image;
     }
 
     await query(
       `UPDATE articles
-       SET title = $1, content = $2, cover_image = $3, updated_at = NOW()
+         SET title = $1,
+             content = $2,
+             cover_image = COALESCE($3, cover_image),  -- 👈 keep old image if none provided
+             updated_at = NOW()
        WHERE id = $4`,
-      [title, content, cover_image || null, articleId]
+      [title, content, newCover, articleId]
     );
 
     res.json({ message: "✅ Article updated successfully" });
   })
 );
-
 
 app.delete(
   "/admin/articles/:id",

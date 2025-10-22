@@ -4058,7 +4058,7 @@ app.get(
 );
 
 
-// ===== SUMMARY: companies & jobs (admin vs non-admin) within [from,to] =====
+// ===== SUMMARY: companies & jobs (admin vs non-admin) within [from,to] + ALL-TIME COMPANY TOTALS =====
 app.get(
   "/reports/companies/summary",
   authenticateToken,
@@ -4069,12 +4069,11 @@ app.get(
 
     const { from, to } = req.query;
 
-    // --- Helpers (scoped to this handler) ---
     // Treat NULL dates as "today" so rows aren't dropped by the range filter.
     const companiesDateExpr = `COALESCE(c.created_at::date, now()::date)`;
     const jobsDateExpr      = `COALESCE(j.posted_at::date, now()::date)`;
 
-    // "Paid" definition (your original logic: any non-'free' plan_type OR featured).
+    // "Paid" definition (your original logic).
     const paidCase = `
       CASE
         WHEN (COALESCE(NULLIF(TRIM(LOWER(j.plan_type)), ''), 'free') <> 'free')
@@ -4083,10 +4082,8 @@ app.get(
       END
     `;
 
-    // --- Companies summary ---
-    // Admin company = company owner (companies.user_id) is admin.
-    // LEFT JOIN so companies without a matching user row don't get dropped.
-    const companiesSql = `
+    // --- Companies summary (RANGE) ---
+    const companiesRangeSql = `
       SELECT
         SUM(CASE WHEN COALESCE(u_owner.is_admin, FALSE) THEN 1 ELSE 0 END)::int AS companies_admin,
         SUM(CASE WHEN COALESCE(u_owner.is_admin, FALSE) THEN 0 ELSE 1 END)::int AS companies_non_admin
@@ -4096,9 +4093,17 @@ app.get(
         AND ${companiesDateExpr} <= COALESCE($2::date, now()::date)
     `;
 
-    // --- Jobs summary ---
-    // Admin job = (job poster is admin) OR (company owner is admin).
-    // Use LEFT JOINs so NULL posted_by / company_id don't drop rows.
+    // --- Companies summary (ALL-TIME, no date filter) ---
+    const companiesAllTimeSql = `
+      SELECT
+        SUM(CASE WHEN COALESCE(u_owner.is_admin, FALSE) THEN 1 ELSE 0 END)::int AS companies_admin_all_time,
+        SUM(CASE WHEN COALESCE(u_owner.is_admin, FALSE) THEN 0 ELSE 1 END)::int AS companies_non_admin_all_time
+      FROM companies c
+      LEFT JOIN users u_owner ON u_owner.id = c.user_id
+    `;
+
+    // --- Jobs summary (RANGE) ---
+    // Admin job = (poster is admin) OR (company owner is admin)
     const jobsSql = `
       SELECT
         SUM(CASE WHEN (COALESCE(u_poster.is_admin, FALSE) OR COALESCE(u_owner.is_admin, FALSE)) AND ${paidCase}=1 THEN 1 ELSE 0 END)::int AS paid_jobs_admin,
@@ -4114,13 +4119,15 @@ app.get(
         AND j.is_active IS TRUE
     `;
 
-    const [companiesRes, jobsRes] = await Promise.all([
-      query(companiesSql, [from || null, to || null]),
-      query(jobsSql,      [from || null, to || null]),
+    const [companiesRangeRes, companiesAllTimeRes, jobsRes] = await Promise.all([
+      query(companiesRangeSql, [from || null, to || null]),
+      query(companiesAllTimeSql),
+      query(jobsSql, [from || null, to || null]),
     ]);
 
-    const c = companiesRes.rows[0] || { companies_admin: 0, companies_non_admin: 0 };
-    const j = jobsRes.rows[0] || {
+    const cRange = companiesRangeRes.rows[0] || { companies_admin: 0, companies_non_admin: 0 };
+    const cAll   = companiesAllTimeRes.rows[0] || { companies_admin_all_time: 0, companies_non_admin_all_time: 0 };
+    const j      = jobsRes.rows[0] || {
       paid_jobs_admin: 0,
       free_jobs_admin: 0,
       paid_jobs_non_admin: 0,
@@ -4128,19 +4135,27 @@ app.get(
     };
 
     res.json({
+      // RANGE totals (respect the selected date period)
       non_admin: {
-        companies_created: c.companies_non_admin,
+        companies_created: cRange.companies_non_admin,
         paid_jobs: j.paid_jobs_non_admin,
         free_jobs: j.free_jobs_non_admin,
       },
       admin: {
-        companies_created: c.companies_admin,
+        companies_created: cRange.companies_admin,
         paid_jobs: j.paid_jobs_admin,
         free_jobs: j.free_jobs_admin,
+      },
+      // ALL-TIME company totals (ignore date filter) — useful to display alongside the range
+      all_time_companies: {
+        non_admin: cAll.companies_non_admin_all_time,
+        admin:     cAll.companies_admin_all_time,
+        total:     (cAll.companies_admin_all_time || 0) + (cAll.companies_non_admin_all_time || 0),
       },
     });
   })
 );
+
 
 //----------end of companies reports
 //-------------------------------------------------------------------------

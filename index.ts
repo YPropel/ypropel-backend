@@ -3996,28 +3996,35 @@ app.get(
       return res.status(403).json({ error: "Access denied. Admins only." });
     }
 
-    const { from, to } = req.query;
+    // UPDATE your existing /reports/companies/jobs-by-company handler body:
+const { from, to, q } = req.query;
 
-    const sql = `
-      SELECT
-        c.id                                   AS company_id,
-        c.name                                 AS company_name,
-        COUNT(*)::int                          AS total_jobs,
-        SUM(${paidCase})::int                  AS paid_jobs,
-        SUM(1 - ${paidCase})::int              AS free_jobs,
-        MIN(j.posted_at)                       AS first_job_posted_at,
-        MAX(j.posted_at)                       AS last_job_posted_at,
-        COALESCE(cjl.free_jobs_used, 0)::int   AS free_jobs_used_total
-      FROM jobs j
-      JOIN companies c ON c.id = j.company_id
-      LEFT JOIN company_job_limit cjl ON cjl.company_id = c.id
-      WHERE ${jobsDateFilter}
-      GROUP BY c.id, c.name, cjl.free_jobs_used
-      ORDER BY total_jobs DESC, paid_jobs DESC
-    `;
+const nameFilter = q ? `AND c.name ILIKE '%' || $3 || '%'` : ``;
 
-    const result = await query(sql, [from || null, to || null]);
-    res.json(result.rows);
+const sql = `
+  SELECT
+    c.id                                   AS company_id,
+    c.name                                 AS company_name,
+    COUNT(*)::int                          AS total_jobs,
+    SUM(${paidCase})::int                  AS paid_jobs,
+    SUM(1 - ${paidCase})::int              AS free_jobs,
+    MIN(j.posted_at)                       AS first_job_posted_at,
+    MAX(j.posted_at)                       AS last_job_posted_at,
+    COALESCE(cjl.free_jobs_used, 0)::int   AS free_jobs_used_total
+  FROM jobs j
+  JOIN companies c ON c.id = j.company_id
+  LEFT JOIN company_job_limit cjl ON cjl.company_id = c.id
+  WHERE ${jobsDateFilter}
+  ${nameFilter}
+  GROUP BY c.id, c.name, cjl.free_jobs_used
+  ORDER BY total_jobs DESC, paid_jobs DESC
+`;
+
+const params: any[] = [from || null, to || null];
+if (q) params.push(q);
+const result = await query(sql, params);
+res.json(result.rows);
+
   })
 );
 
@@ -4050,8 +4057,77 @@ app.get(
   })
 );
 
-//----------end of companies reports
 
+// ===== SUMMARY: companies & jobs (admin vs non-admin) within [from,to] =====
+app.get(
+  "/reports/companies/summary",
+  authenticateToken,
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user?.isAdmin) {
+      return res.status(403).json({ error: "Access denied. Admins only." });
+    }
+
+    const { from, to } = req.query;
+
+    // NOTE: users.is_admin is assumed; rename if different in your schema.
+    const companiesSql = `
+      SELECT
+        SUM(CASE WHEN u.is_admin IS TRUE  THEN 1 ELSE 0 END)::int AS companies_admin,
+        SUM(CASE WHEN u.is_admin IS NOT TRUE THEN 1 ELSE 0 END)::int AS companies_non_admin
+      FROM companies c
+      JOIN users u ON u.id = c.user_id
+      WHERE c.created_at::date >= COALESCE($1::date, (now() - interval '30 days')::date)
+        AND c.created_at::date <= COALESCE($2::date, now()::date)
+    `;
+
+    const paidCase = `
+      CASE
+        WHEN (COALESCE(NULLIF(TRIM(LOWER(j.plan_type)), ''), 'free') <> 'free')
+          OR (j.is_featured IS TRUE)
+        THEN 1 ELSE 0
+      END
+    `;
+
+    const jobsSql = `
+      SELECT
+        SUM(CASE WHEN u.is_admin IS TRUE  AND ${paidCase}=1 THEN 1 ELSE 0 END)::int AS paid_jobs_admin,
+        SUM(CASE WHEN u.is_admin IS NOT TRUE AND ${paidCase}=1 THEN 1 ELSE 0 END)::int AS paid_jobs_non_admin,
+        SUM(CASE WHEN u.is_admin IS TRUE  AND ${paidCase}=0 THEN 1 ELSE 0 END)::int AS free_jobs_admin,
+        SUM(CASE WHEN u.is_admin IS NOT TRUE AND ${paidCase}=0 THEN 1 ELSE 0 END)::int AS free_jobs_non_admin
+      FROM jobs j
+      JOIN users u ON u.id = j.posted_by
+      WHERE j.is_active IS TRUE
+        AND j.posted_at::date >= COALESCE($1::date, (now() - interval '30 days')::date)
+        AND j.posted_at::date <= COALESCE($2::date, now()::date)
+    `;
+
+    const [companiesRes, jobsRes] = await Promise.all([
+      query(companiesSql, [from || null, to || null]),
+      query(jobsSql, [from || null, to || null]),
+    ]);
+
+    const c = companiesRes.rows[0] || { companies_admin: 0, companies_non_admin: 0 };
+    const j = jobsRes.rows[0] || {
+      paid_jobs_admin: 0, paid_jobs_non_admin: 0,
+      free_jobs_admin: 0, free_jobs_non_admin: 0,
+    };
+
+    res.json({
+      non_admin: {
+        companies_created: c.companies_non_admin,
+        paid_jobs: j.paid_jobs_non_admin,
+        free_jobs: j.free_jobs_non_admin,
+      },
+      admin: {
+        companies_created: c.companies_admin,
+        paid_jobs: j.paid_jobs_admin,
+        free_jobs: j.free_jobs_admin,
+      },
+    });
+  })
+);
+
+//----------end of companies reports
 //-------------------------------------------------------------------------
 //------------------------END of Admin BackEnd routes----------------------------
 

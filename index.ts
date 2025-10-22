@@ -3658,85 +3658,69 @@ app.get(
 );
 
 //------  Admin post articles
-
-function getBaseUrl(req: Request) {
-  const envBase = process.env.PUBLIC_BASE_URL; // e.g. https://api.ypropel.com
-  return envBase || `${req.protocol}://${req.get("host")}`;
-}
 //-- before new edit profile non - but orignal missed
 app.post(
   "/admin/articles",
   authenticateToken,
-  // 👇 this is what was missing
-  upload.single("cover_image"),
   asyncHandler(async (req: Request, res: Response) => {
-    if (!req.user?.isAdmin) return res.status(403).json({ error: "Admins only" });
+    if (!req.user?.isAdmin) {
+      return res.status(403).json({ error: "Admins only" });
+    }
 
-    // Works for both JSON and multipart:
-    const { title, content } = req.body;
-    if (!title || !content) return res.status(400).json({ error: "Title and content are required" });
+    const { title, content, cover_image } = req.body;
 
-    const base = getBaseUrl(req);
-    let coverUrl: string | null = null;
-
-    // Case A: user uploaded a file
-    if (req.file) {
-      coverUrl = `${base}/uploads/${req.file.filename}`;
-    } else {
-      // Case B: user sent a URL in body
-      const raw = (req.body.cover_image || "").trim();
-      if (raw) coverUrl = raw.startsWith("/") ? `${base}${raw}` : raw; // normalize relative to absolute
+    if (!title || !content) {
+      return res.status(400).json({ error: "Title and content are required" });
     }
 
     const result = await query(
       `INSERT INTO articles (title, content, cover_image, author_id, published_at)
        VALUES ($1, $2, $3, $4, NOW()) RETURNING *`,
-      [title, content, coverUrl, req.user.userId]
+      [title, content, cover_image || null, req.user.userId]
     );
 
     res.status(201).json(result.rows[0]);
   })
 );
 
-// ------ UPDATE (don't wipe image unless a new one is provided)
+
+//----- importentry level jobs route-(main route code is in AdminRoutes.tsx-
+//app.use("/admin", adminBackendRouter);
+
+
+//--------Add added articles lists to admin page so they can edit and delete
+
+
 app.put(
   "/admin/articles/:id",
   authenticateToken,
-  upload.single("cover_image"),
   asyncHandler(async (req: Request, res: Response) => {
-    if (!req.user?.isAdmin) return res.status(403).json({ error: "Admins only" });
+    const articleId = parseInt(req.params.id);
+    if (isNaN(articleId)) {
+      return res.status(400).json({ error: "Invalid article ID" });
+    }
 
-    const articleId = Number(req.params.id);
-    if (Number.isNaN(articleId)) return res.status(400).json({ error: "Invalid article ID" });
+    const { title, content, cover_image } = req.body;
 
-    const { title, content } = req.body;
-    if (!title || !content) return res.status(400).json({ error: "Title and content are required" });
+    if (!req.user?.isAdmin) {
+      return res.status(403).json({ error: "Admins only" });
+    }
 
-    const base = getBaseUrl(req);
-
-    // compute newCover if provided; else keep existing
-    let newCover: string | null = null;
-    if (req.file) {
-      newCover = `${base}/uploads/${req.file.filename}`;
-    } else if (typeof req.body.cover_image === "string" && req.body.cover_image.trim() !== "") {
-      newCover = req.body.cover_image.startsWith("/")
-        ? `${base}${req.body.cover_image}`
-        : req.body.cover_image;
+    if (!title || !content) {
+      return res.status(400).json({ error: "Title and content are required" });
     }
 
     await query(
       `UPDATE articles
-         SET title = $1,
-             content = $2,
-             cover_image = COALESCE($3, cover_image),  -- 👈 keep old image if none provided
-             updated_at = NOW()
+       SET title = $1, content = $2, cover_image = $3, updated_at = NOW()
        WHERE id = $4`,
-      [title, content, newCover, articleId]
+      [title, content, cover_image || null, articleId]
     );
 
     res.json({ message: "✅ Article updated successfully" });
   })
 );
+
 
 app.delete(
   "/admin/articles/:id",
@@ -3956,6 +3940,119 @@ app.get(
     });
   })
 );
+
+//---------------Companies and Jobs posts reports------------------
+// ====================== COMPANIES: DAILY CREATED ======================
+app.get(
+  "/reports/companies/daily",
+  authenticateToken,
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user?.isAdmin) {
+      return res.status(403).json({ error: "Access denied. Admins only." });
+    }
+
+    const { from, to } = req.query;
+
+    const sql = `
+      SELECT
+        date_trunc('day', created_at)::date AS day,
+        COUNT(*)::int                       AS companies
+      FROM companies
+      WHERE created_at::date >= COALESCE($1::date, (now() - interval '30 days')::date)
+        AND created_at::date <= COALESCE($2::date, now()::date)
+      GROUP BY 1
+      ORDER BY 1 ASC
+    `;
+
+    const result = await query(sql, [from || null, to || null]);
+    res.json(result.rows);
+  })
+);
+
+
+// ====================== HELPERS (paid vs free CASE) ======================
+const paidCase = `
+  CASE
+    WHEN (COALESCE(NULLIF(TRIM(LOWER(j.plan_type)), ''), 'free') <> 'free')
+      OR (j.is_featured IS TRUE)
+    THEN 1 ELSE 0
+  END
+`;
+
+// NOTE: jobs considered only if active and within [from,to] by posted_at
+const jobsDateFilter = `
+  j.is_active IS TRUE
+  AND j.posted_at::date >= COALESCE($1::date, (now() - interval '30 days')::date)
+  AND j.posted_at::date <= COALESCE($2::date, now()::date)
+`;
+
+
+// ====================== JOBS: PER COMPANY (FREE vs PAID) ======================
+app.get(
+  "/reports/companies/jobs-by-company",
+  authenticateToken,
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user?.isAdmin) {
+      return res.status(403).json({ error: "Access denied. Admins only." });
+    }
+
+    const { from, to } = req.query;
+
+    const sql = `
+      SELECT
+        c.id                                   AS company_id,
+        c.name                                 AS company_name,
+        COUNT(*)::int                          AS total_jobs,
+        SUM(${paidCase})::int                  AS paid_jobs,
+        SUM(1 - ${paidCase})::int              AS free_jobs,
+        MIN(j.posted_at)                       AS first_job_posted_at,
+        MAX(j.posted_at)                       AS last_job_posted_at,
+        COALESCE(cjl.free_jobs_used, 0)::int   AS free_jobs_used_total
+      FROM jobs j
+      JOIN companies c ON c.id = j.company_id
+      LEFT JOIN company_job_limit cjl ON cjl.company_id = c.id
+      WHERE ${jobsDateFilter}
+      GROUP BY c.id, c.name, cjl.free_jobs_used
+      ORDER BY total_jobs DESC, paid_jobs DESC
+    `;
+
+    const result = await query(sql, [from || null, to || null]);
+    res.json(result.rows);
+  })
+);
+
+
+// ====================== JOBS: DAILY SPLIT (TOTAL / FREE / PAID) ======================
+app.get(
+  "/reports/companies/jobs-daily",
+  authenticateToken,
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user?.isAdmin) {
+      return res.status(403).json({ error: "Access denied. Admins only." });
+    }
+
+    const { from, to } = req.query;
+
+    const sql = `
+      SELECT
+        date_trunc('day', j.posted_at)::date AS day,
+        COUNT(*)::int                        AS total_jobs,
+        SUM(${paidCase})::int                AS paid_jobs,
+        SUM(1 - ${paidCase})::int            AS free_jobs
+      FROM jobs j
+      WHERE ${jobsDateFilter}
+      GROUP BY 1
+      ORDER BY 1 ASC
+    `;
+
+    const result = await query(sql, [from || null, to || null]);
+    res.json(result.rows);
+  })
+);
+
+//----------end of companies reports
+
+//-------------------------------------------------------------------------
 //------------------------END of Admin BackEnd routes----------------------------
 
 

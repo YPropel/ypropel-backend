@@ -4080,36 +4080,70 @@ app.get(
         AND c.created_at::date <= COALESCE($2::date, now()::date)
     `;
 
-    const paidCase = `
-      CASE
-        WHEN (COALESCE(NULLIF(TRIM(LOWER(j.plan_type)), ''), 'free') <> 'free')
-          OR (j.is_featured IS TRUE)
-        THEN 1 ELSE 0
-      END
+    // ===== helper CASEs reused here too =====
+const paidCase = `
+  CASE
+    WHEN (COALESCE(NULLIF(TRIM(LOWER(j.plan_type)), ''), 'free') <> 'free')
+      OR (j.is_featured IS TRUE)
+    THEN 1 ELSE 0
+  END
+`;
+
+// Use COALESCE so NULL dates don't drop rows (default to "today")
+const companiesDateExpr = `COALESCE(c.created_at::date, now()::date)`;
+const jobsDateExpr      = `COALESCE(j.posted_at::date, now()::date)`;
+
+app.get(
+  "/reports/companies/summary",
+  authenticateToken,
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user?.isAdmin) {
+      return res.status(403).json({ error: "Access denied. Admins only." });
+    }
+
+    const { from, to } = req.query;
+
+    // Companies:
+    // - company owner determines admin/non-admin (companies.user_id -> users.id)
+    // - include rows even if created_at is NULL (counted as today via COALESCE)
+    const companiesSql = `
+      SELECT
+        SUM(CASE WHEN coalesce(u_owner.is_admin, FALSE) THEN 1 ELSE 0 END)::int AS companies_admin,
+        SUM(CASE WHEN coalesce(u_owner.is_admin, FALSE) THEN 0 ELSE 1 END)::int AS companies_non_admin
+      FROM companies c
+      LEFT JOIN users u_owner ON u_owner.id = c.user_id
+      WHERE ${companiesDateExpr} >= COALESCE($1::date, (now() - interval '30 days')::date)
+        AND ${companiesDateExpr} <= COALESCE($2::date, now()::date)
     `;
 
+    // Jobs:
+    // - admin if EITHER job poster is admin OR company owner is admin
+    // - LEFT JOIN on both to avoid dropping rows when posted_by is NULL
+    // - include rows even if posted_at is NULL (counted as today via COALESCE)
     const jobsSql = `
       SELECT
-        SUM(CASE WHEN u.is_admin IS TRUE  AND ${paidCase}=1 THEN 1 ELSE 0 END)::int AS paid_jobs_admin,
-        SUM(CASE WHEN u.is_admin IS NOT TRUE AND ${paidCase}=1 THEN 1 ELSE 0 END)::int AS paid_jobs_non_admin,
-        SUM(CASE WHEN u.is_admin IS TRUE  AND ${paidCase}=0 THEN 1 ELSE 0 END)::int AS free_jobs_admin,
-        SUM(CASE WHEN u.is_admin IS NOT TRUE AND ${paidCase}=0 THEN 1 ELSE 0 END)::int AS free_jobs_non_admin
+        SUM(CASE WHEN (COALESCE(u_poster.is_admin, FALSE) OR COALESCE(u_owner.is_admin, FALSE)) AND ${paidCase}=1 THEN 1 ELSE 0 END)::int AS paid_jobs_admin,
+        SUM(CASE WHEN (COALESCE(u_poster.is_admin, FALSE) OR COALESCE(u_owner.is_admin, FALSE)) AND ${paidCase}=0 THEN 1 ELSE 0 END)::int AS free_jobs_admin,
+        SUM(CASE WHEN NOT (COALESCE(u_poster.is_admin, FALSE) OR COALESCE(u_owner.is_admin, FALSE)) AND ${paidCase}=1 THEN 1 ELSE 0 END)::int AS paid_jobs_non_admin,
+        SUM(CASE WHEN NOT (COALESCE(u_poster.is_admin, FALSE) OR COALESCE(u_owner.is_admin, FALSE)) AND ${paidCase}=0 THEN 1 ELSE 0 END)::int AS free_jobs_non_admin
       FROM jobs j
-      JOIN users u ON u.id = j.posted_by
-      WHERE j.is_active IS TRUE
-        AND j.posted_at::date >= COALESCE($1::date, (now() - interval '30 days')::date)
-        AND j.posted_at::date <= COALESCE($2::date, now()::date)
+      LEFT JOIN users u_poster ON u_poster.id = j.posted_by
+      LEFT JOIN companies c    ON c.id = j.company_id
+      LEFT JOIN users u_owner  ON u_owner.id = c.user_id
+      WHERE ${jobsDateExpr} >= COALESCE($1::date, (now() - interval '30 days')::date)
+        AND ${jobsDateExpr} <= COALESCE($2::date, now()::date)
+        AND j.is_active IS TRUE
     `;
 
     const [companiesRes, jobsRes] = await Promise.all([
       query(companiesSql, [from || null, to || null]),
-      query(jobsSql, [from || null, to || null]),
+      query(jobsSql,      [from || null, to || null]),
     ]);
 
     const c = companiesRes.rows[0] || { companies_admin: 0, companies_non_admin: 0 };
     const j = jobsRes.rows[0] || {
-      paid_jobs_admin: 0, paid_jobs_non_admin: 0,
-      free_jobs_admin: 0, free_jobs_non_admin: 0,
+      paid_jobs_admin: 0, free_jobs_admin: 0,
+      paid_jobs_non_admin: 0, free_jobs_non_admin: 0,
     };
 
     res.json({
@@ -4126,6 +4160,7 @@ app.get(
     });
   })
 );
+
 
 //----------end of companies reports
 //-------------------------------------------------------------------------

@@ -3925,61 +3925,116 @@ app.get(
       return res.status(403).json({ error: "Access denied. Admins only." });
     }
 
-    const date = req.query.date as string;
-    if (!date) return res.status(400).json({ error: "Date is required" });
+    const { date, from, to } = req.query as {
+      date?: string;
+      from?: string;
+      to?: string;
+    };
+
+    // Build WHERE + params for single-day or range
+    let whereClause = "";
+    let params: any[] = [];
+
+    if (date) {
+      whereClause = "visit_date = $1::date";
+      params = [date];
+    } else if (from || to) {
+      // If only one bound is provided, use it; if both, use a between
+      // When only "from": >= from
+      // When only "to":   <= to
+      if (from && to) {
+        whereClause = "visit_date >= $1::date AND visit_date <= $2::date";
+        params = [from, to];
+      } else if (from) {
+        whereClause = "visit_date >= $1::date";
+        params = [from];
+      } else {
+        whereClause = "visit_date <= $1::date";
+        params = [to];
+      }
+    } else {
+      // default: last 30 days
+      whereClause =
+        "visit_date >= (now() - interval '30 days')::date AND visit_date <= now()::date";
+      params = [];
+    }
 
     // Totals (members vs guests)
-    const visitorsFromMembersResult = await query(
-      `SELECT COUNT(*) AS count
-       FROM visitors
-       WHERE visit_date = $1::date
-         AND user_id IS NOT NULL`,
-      [date]
-    );
-
-    const visitorsFromGuestsResult = await query(
-      `SELECT COUNT(*) AS count
-       FROM visitors
-       WHERE visit_date = $1::date
-         AND user_id IS NULL`,
-      [date]
-    );
+    const visitorsFromMembersSql = `
+      SELECT COUNT(*) AS count
+      FROM visitors
+      WHERE ${whereClause}
+        AND user_id IS NOT NULL
+    `;
+    const visitorsFromGuestsSql = `
+      SELECT COUNT(*) AS count
+      FROM visitors
+      WHERE ${whereClause}
+        AND user_id IS NULL
+    `;
 
     // Unique counts
-    const uniqueMemberVisitsResult = await query(
-      `SELECT COUNT(DISTINCT user_id) AS unique_count
-       FROM visitors
-       WHERE visit_date = $1::date
-         AND user_id IS NOT NULL`,
-      [date]
-    );
+    const uniqueMemberVisitsSql = `
+      SELECT COUNT(DISTINCT user_id) AS unique_count
+      FROM visitors
+      WHERE ${whereClause}
+        AND user_id IS NOT NULL
+    `;
+    const uniqueGuestVisitsSql = `
+      SELECT COUNT(DISTINCT ip_address) AS unique_guest_count
+      FROM visitors
+      WHERE ${whereClause}
+        AND user_id IS NULL
+    `;
 
-    const uniqueGuestVisitsResult = await query(
-      `SELECT COUNT(DISTINCT ip_address) AS unique_guest_count
-       FROM visitors
-       WHERE visit_date = $1::date
-         AND user_id IS NULL`,
-      [date]
-    );
+    // Top guest URLs (guests only) with unique guests per URL
+    const topGuestPathsSql = `
+      SELECT
+        COALESCE(page_url, '(unknown)') AS page_url,
+        COUNT(*)::int AS total_visits,
+        COUNT(DISTINCT ip_address)::int AS unique_guest_visits
+      FROM visitors
+      WHERE ${whereClause}
+        AND user_id IS NULL
+      GROUP BY COALESCE(page_url, '(unknown)')
+      ORDER BY unique_guest_visits DESC, total_visits DESC
+      LIMIT 50
+    `;
 
-    // Top guest URLs for that day
-    const topGuestPathsResult = await query(
-      `SELECT COALESCE(page_url,'(unknown)') AS path, COUNT(*)::int AS count
-       FROM visitors
-       WHERE visit_date = $1::date
-         AND user_id IS NULL
-       GROUP BY COALESCE(page_url,'(unknown)')
-       ORDER BY count DESC
-       LIMIT 20`,
-      [date]
+    // Execute queries (reuse same params array)
+    const [
+      visitorsFromMembersResult,
+      visitorsFromGuestsResult,
+      uniqueMemberVisitsResult,
+      uniqueGuestVisitsResult,
+      topGuestPathsResult,
+    ] = await Promise.all([
+      query(visitorsFromMembersSql, params),
+      query(visitorsFromGuestsSql, params),
+      query(uniqueMemberVisitsSql, params),
+      query(uniqueGuestVisitsSql, params),
+      query(topGuestPathsSql, params),
+    ]);
+
+    // Optionally build full URLs if PUBLIC_BASE_URL is set (e.g., https://www.ypropel.com)
+    const base = process.env.PUBLIC_BASE_URL?.replace(/\/+$/, ""); // trim trailing slash
+    const topGuestPaths = (topGuestPathsResult.rows || []).map(
+      (r: { page_url: string; total_visits: number; unique_guest_visits: number }) => ({
+        page_url: r.page_url,
+        total_visits: Number(r.total_visits) || 0,
+        unique_guest_visits: Number(r.unique_guest_visits) || 0,
+        ...(base && r.page_url && r.page_url !== "(unknown)"
+          ? { full_url: `${base}${r.page_url.startsWith("/") ? "" : "/"}${r.page_url}` }
+          : {}),
+      })
     );
 
     res.json({
-      visitorsFromMembers: Number(visitorsFromMembersResult.rows[0].count) || 0,
-      visitorsFromGuests: Number(visitorsFromGuestsResult.rows[0].count) || 0,
-      uniqueMemberVisits: Number(uniqueMemberVisitsResult.rows[0].unique_count) || 0,
-      uniqueGuestVisits: Number(uniqueGuestVisitsResult.rows[0].unique_guest_count) || 0,
-      topGuestPaths: topGuestPathsResult.rows, // [{ path, count }]
+      visitorsFromMembers: Number(visitorsFromMembersResult.rows[0]?.count) || 0,
+      visitorsFromGuests: Number(visitorsFromGuestsResult.rows[0]?.count) || 0,
+      uniqueMemberVisits: Number(uniqueMemberVisitsResult.rows[0]?.unique_count) || 0,
+      uniqueGuestVisits: Number(uniqueGuestVisitsResult.rows[0]?.unique_guest_count) || 0,
+      topGuestPaths, // [{ page_url, total_visits, unique_guest_visits, full_url? }]
     });
   })
 );

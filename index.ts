@@ -3928,7 +3928,6 @@ app.get(
     const date = req.query.date as string;
     if (!date) return res.status(400).json({ error: "Date is required" });
 
-    // Totals (members vs guests)
     const visitorsFromMembersResult = await query(
       `SELECT COUNT(*) AS count
        FROM visitors
@@ -3945,7 +3944,6 @@ app.get(
       [date]
     );
 
-    // Unique counts
     const uniqueMemberVisitsResult = await query(
       `SELECT COUNT(DISTINCT user_id) AS unique_count
        FROM visitors
@@ -3962,24 +3960,50 @@ app.get(
       [date]
     );
 
-    // Top guest URLs for that day
-    const topGuestPathsResult = await query(
-      `SELECT COALESCE(page_url,'(unknown)') AS path, COUNT(*)::int AS count
-       FROM visitors
-       WHERE visit_date = $1::date
-         AND user_id IS NULL
-       GROUP BY COALESCE(page_url,'(unknown)')
-       ORDER BY count DESC
-       LIMIT 20`,
+    // Unique guest URLs (by IP) for that day
+    const guestUrlsResult = await query(
+      `WITH ranked AS (
+         SELECT
+           page_url,
+           ip_address,
+           MIN(id) AS first_id
+         FROM visitors
+         WHERE visit_date = $1::date
+           AND user_id IS NULL
+         GROUP BY page_url, ip_address
+       )
+       SELECT
+         COALESCE(v.page_url,'(unknown)') AS page_url,
+         COUNT(*)::int AS total_visits,
+         COUNT(DISTINCT v.ip_address)::int AS unique_guest_visits
+       FROM visitors v
+       WHERE v.visit_date = $1::date
+         AND v.user_id IS NULL
+       GROUP BY COALESCE(v.page_url,'(unknown)')
+       ORDER BY unique_guest_visits DESC, total_visits DESC
+       LIMIT 50`,
       [date]
     );
+
+    // If you have PUBLIC_BASE_URL, you can attach a full URL for convenience:
+    const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || "";
+    const withFullUrl = guestUrlsResult.rows.map((r: any) => ({
+      ...r,
+      full_url: PUBLIC_BASE_URL ? `${PUBLIC_BASE_URL}${r.page_url || ""}` : null,
+    }));
 
     res.json({
       visitorsFromMembers: Number(visitorsFromMembersResult.rows[0].count) || 0,
       visitorsFromGuests: Number(visitorsFromGuestsResult.rows[0].count) || 0,
       uniqueMemberVisits: Number(uniqueMemberVisitsResult.rows[0].unique_count) || 0,
       uniqueGuestVisits: Number(uniqueGuestVisitsResult.rows[0].unique_guest_count) || 0,
-      topGuestPaths: topGuestPathsResult.rows, // [{ path, count }]
+      // New key:
+      topGuestUrls: withFullUrl,
+      // Legacy key for compatibility with older frontends:
+      topGuestPaths: withFullUrl.map((r: any) => ({
+        path: r.page_url,
+        count: r.unique_guest_visits, // keep old meaning as "unique guest visits"
+      })),
     });
   })
 );
@@ -3991,7 +4015,6 @@ app.get(
   "/reports/members",
   authenticateToken,
   asyncHandler(async (req, res) => {
-       //--Check if is-admin
     if (!req.user?.isAdmin) {
       return res.status(403).json({ error: "Access denied. Admins only." });
     }
@@ -3999,7 +4022,12 @@ app.get(
     const countResult = await query("SELECT COUNT(*) FROM users");
     const totalMembers = parseInt(countResult.rows[0].count, 10);
 
-    const membersResult = await query("SELECT id, name, email FROM users ORDER BY name DESC");
+    // include created_at and order newest → oldest
+    const membersResult = await query(
+      `SELECT id, name, email, created_at
+       FROM users
+       ORDER BY created_at DESC NULLS LAST`
+    );
 
     res.json({
       totalMembers,

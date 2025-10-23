@@ -3836,8 +3836,8 @@ app.get('/articles/:id/likes', authenticateToken, asyncHandler(async (req: Reque
 }));
 
 
-//---------------------------
-//------------Admin Reports routes------------
+//------------------------------------------------------------------
+//======================= Admin Reports routes =====================
 
 app.get(
   "/reports/members/new",
@@ -3862,7 +3862,7 @@ app.get(
   })
 );
 
-app.get(
+/*app.get(
   "/reports/visitors",
   authenticateToken,
   asyncHandler(async (req, res) => {
@@ -3916,7 +3916,74 @@ app.get(
       uniqueGuestVisits: Number(uniqueGuestVisitsResult.rows[0].unique_guest_count) || 0, // new field
     });
   })
+); */
+app.get(
+  "/reports/visitors",
+  authenticateToken,
+  asyncHandler(async (req, res) => {
+    if (!req.user?.isAdmin) {
+      return res.status(403).json({ error: "Access denied. Admins only." });
+    }
+
+    const date = req.query.date as string;
+    if (!date) return res.status(400).json({ error: "Date is required" });
+
+    // Totals (members vs guests)
+    const visitorsFromMembersResult = await query(
+      `SELECT COUNT(*) AS count
+       FROM visitors
+       WHERE visit_date = $1::date
+         AND user_id IS NOT NULL`,
+      [date]
+    );
+
+    const visitorsFromGuestsResult = await query(
+      `SELECT COUNT(*) AS count
+       FROM visitors
+       WHERE visit_date = $1::date
+         AND user_id IS NULL`,
+      [date]
+    );
+
+    // Unique counts
+    const uniqueMemberVisitsResult = await query(
+      `SELECT COUNT(DISTINCT user_id) AS unique_count
+       FROM visitors
+       WHERE visit_date = $1::date
+         AND user_id IS NOT NULL`,
+      [date]
+    );
+
+    const uniqueGuestVisitsResult = await query(
+      `SELECT COUNT(DISTINCT ip_address) AS unique_guest_count
+       FROM visitors
+       WHERE visit_date = $1::date
+         AND user_id IS NULL`,
+      [date]
+    );
+
+    // Top guest URLs for that day
+    const topGuestPathsResult = await query(
+      `SELECT COALESCE(page_url,'(unknown)') AS path, COUNT(*)::int AS count
+       FROM visitors
+       WHERE visit_date = $1::date
+         AND user_id IS NULL
+       GROUP BY COALESCE(page_url,'(unknown)')
+       ORDER BY count DESC
+       LIMIT 20`,
+      [date]
+    );
+
+    res.json({
+      visitorsFromMembers: Number(visitorsFromMembersResult.rows[0].count) || 0,
+      visitorsFromGuests: Number(visitorsFromGuestsResult.rows[0].count) || 0,
+      uniqueMemberVisits: Number(uniqueMemberVisitsResult.rows[0].unique_count) || 0,
+      uniqueGuestVisits: Number(uniqueGuestVisitsResult.rows[0].unique_guest_count) || 0,
+      topGuestPaths: topGuestPathsResult.rows, // [{ path, count }]
+    });
+  })
 );
+
 
 // -------------------------
 
@@ -3987,7 +4054,7 @@ const jobsDateFilter = `
 `;
 
 
-// ====================== JOBS: PER COMPANY (FREE vs PAID) ======================
+// ====================== JOBS Report: PER COMPANY (FREE vs PAID) ======================
 app.get(
   "/reports/companies/jobs-by-company",
   authenticateToken,
@@ -4029,7 +4096,7 @@ res.json(result.rows);
 );
 
 
-// ====================== JOBS: DAILY SPLIT (TOTAL / FREE / PAID) ======================
+// ======================Companies JOBS: DAILY SPLIT report (TOTAL / FREE / PAID) ======================
 app.get(
   "/reports/companies/jobs-daily",
   authenticateToken,

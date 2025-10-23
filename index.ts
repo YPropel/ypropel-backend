@@ -3925,85 +3925,73 @@ app.get(
       return res.status(403).json({ error: "Access denied. Admins only." });
     }
 
-    const date = req.query.date as string;
-    if (!date) return res.status(400).json({ error: "Date is required" });
+    const { date, from, to } = req.query as { date?: string; from?: string; to?: string };
 
-    const visitorsFromMembersResult = await query(
-      `SELECT COUNT(*) AS count
+    let where = "";
+    let params: any[] = [];
+
+    if (date) {
+      where = "visit_date = $1::date";
+      params = [date];
+    } else if (from || to) {
+      where = `
+        visit_date >= COALESCE($1::date, (now() - interval '30 days')::date)
+        AND visit_date <= COALESCE($2::date, now()::date)
+      `;
+      params = [from || null, to || null];
+    } else {
+      where = "visit_date >= (now() - interval '30 days')::date";
+      params = [];
+    }
+
+    const visitorsFromMembers = await query(
+      `SELECT COUNT(*)::int AS count
        FROM visitors
-       WHERE visit_date = $1::date
-         AND user_id IS NOT NULL`,
-      [date]
+       WHERE ${where} AND user_id IS NOT NULL`,
+      params
     );
 
-    const visitorsFromGuestsResult = await query(
-      `SELECT COUNT(*) AS count
+    const visitorsFromGuests = await query(
+      `SELECT COUNT(*)::int AS count
        FROM visitors
-       WHERE visit_date = $1::date
-         AND user_id IS NULL`,
-      [date]
+       WHERE ${where} AND user_id IS NULL`,
+      params
     );
 
-    const uniqueMemberVisitsResult = await query(
-      `SELECT COUNT(DISTINCT user_id) AS unique_count
+    const uniqueMemberVisits = await query(
+      `SELECT COUNT(DISTINCT user_id)::int AS unique_count
        FROM visitors
-       WHERE visit_date = $1::date
-         AND user_id IS NOT NULL`,
-      [date]
+       WHERE ${where} AND user_id IS NOT NULL`,
+      params
     );
 
-    const uniqueGuestVisitsResult = await query(
-      `SELECT COUNT(DISTINCT ip_address) AS unique_guest_count
+    const uniqueGuestVisits = await query(
+      `SELECT COUNT(DISTINCT ip_address)::int AS unique_guest_count
        FROM visitors
-       WHERE visit_date = $1::date
-         AND user_id IS NULL`,
-      [date]
+       WHERE ${where} AND user_id IS NULL`,
+      params
     );
 
-    // Unique guest URLs (by IP) for that day
-    const guestUrlsResult = await query(
-      `WITH ranked AS (
-         SELECT
-           page_url,
-           ip_address,
-           MIN(id) AS first_id
-         FROM visitors
-         WHERE visit_date = $1::date
-           AND user_id IS NULL
-         GROUP BY page_url, ip_address
-       )
-       SELECT
-         COALESCE(v.page_url,'(unknown)') AS page_url,
-         COUNT(*)::int AS total_visits,
-         COUNT(DISTINCT v.ip_address)::int AS unique_guest_visits
-       FROM visitors v
-       WHERE v.visit_date = $1::date
-         AND v.user_id IS NULL
-       GROUP BY COALESCE(v.page_url,'(unknown)')
+    // Guests only — per-URL totals + unique IPs
+    const topGuestUrls = await query(
+      `SELECT
+          COALESCE(page_url,'/') AS page_url,
+          COUNT(*)::int AS total_visits,
+          COUNT(DISTINCT ip_address)::int AS unique_guest_visits
+       FROM visitors
+       WHERE ${where} AND user_id IS NULL
+       GROUP BY COALESCE(page_url,'/')
        ORDER BY unique_guest_visits DESC, total_visits DESC
-       LIMIT 50`,
-      [date]
+       LIMIT 100`,
+      params
     );
-
-    // If you have PUBLIC_BASE_URL, you can attach a full URL for convenience:
-    const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || "";
-    const withFullUrl = guestUrlsResult.rows.map((r: any) => ({
-      ...r,
-      full_url: PUBLIC_BASE_URL ? `${PUBLIC_BASE_URL}${r.page_url || ""}` : null,
-    }));
 
     res.json({
-      visitorsFromMembers: Number(visitorsFromMembersResult.rows[0].count) || 0,
-      visitorsFromGuests: Number(visitorsFromGuestsResult.rows[0].count) || 0,
-      uniqueMemberVisits: Number(uniqueMemberVisitsResult.rows[0].unique_count) || 0,
-      uniqueGuestVisits: Number(uniqueGuestVisitsResult.rows[0].unique_guest_count) || 0,
-      // New key:
-      topGuestUrls: withFullUrl,
-      // Legacy key for compatibility with older frontends:
-      topGuestPaths: withFullUrl.map((r: any) => ({
-        path: r.page_url,
-        count: r.unique_guest_visits, // keep old meaning as "unique guest visits"
-      })),
+      visitorsFromMembers: visitorsFromMembers.rows[0]?.count ?? 0,
+      visitorsFromGuests:  visitorsFromGuests.rows[0]?.count ?? 0,
+      uniqueMemberVisits:  uniqueMemberVisits.rows[0]?.unique_count ?? 0,
+      uniqueGuestVisits:   uniqueGuestVisits.rows[0]?.unique_guest_count ?? 0,
+      topGuestUrls:        topGuestUrls.rows, // [{ page_url, total_visits, unique_guest_visits }]
     });
   })
 );
@@ -4019,18 +4007,51 @@ app.get(
       return res.status(403).json({ error: "Access denied. Admins only." });
     }
 
-    const countResult = await query("SELECT COUNT(*) FROM users");
-    const totalMembers = parseInt(countResult.rows[0].count, 10);
+    const { date, from, to } = req.query as {
+      date?: string;
+      from?: string;
+      to?: string;
+    };
 
-    // include created_at and order newest → oldest
+    // ---- 1) Total members (all-time) ----
+    const countResult = await query("SELECT COUNT(*)::int AS cnt FROM users");
+    const totalMembers = countResult.rows[0]?.cnt ?? 0;
+
+    // ---- 2) New members in selected day or range ----
+    let newWhere = "";
+    let newParams: any[] = [];
+    if (date) {
+      newWhere = "created_at::date = $1::date";
+      newParams = [date];
+    } else if (from || to) {
+      newWhere = `
+        created_at::date >= COALESCE($1::date, (now() - interval '30 days')::date)
+        AND created_at::date <= COALESCE($2::date, now()::date)
+      `;
+      newParams = [from || null, to || null];
+    } else {
+      // default last 30 days
+      newWhere = "created_at >= (now() - interval '30 days')";
+      newParams = [];
+    }
+
+    const newMembersSql = `SELECT COUNT(*)::int AS cnt FROM users WHERE ${newWhere}`;
+    const newMembersResult = await query(newMembersSql, newParams);
+    const newMembersCount = newMembersResult.rows[0]?.cnt ?? 0;
+
+    // ---- 3) Members list ordered by newest sign-up first (all-time) ----
+    // (If you prefer to filter this list by the selected range, replace WHERE TRUE with newWhere and pass newParams)
     const membersResult = await query(
       `SELECT id, name, email, created_at
        FROM users
-       ORDER BY created_at DESC NULLS LAST`
+       WHERE TRUE
+       ORDER BY created_at DESC NULLS LAST`,
+      []
     );
 
     res.json({
       totalMembers,
+      newMembersCount,           // <— added field
       members: membersResult.rows,
     });
   })

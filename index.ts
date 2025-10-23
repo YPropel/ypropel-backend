@@ -3999,7 +3999,7 @@ app.get(
     const countResult = await query("SELECT COUNT(*) FROM users");
     const totalMembers = parseInt(countResult.rows[0].count, 10);
 
-    const membersResult = await query("SELECT id, name, email FROM users ORDER BY name ASC");
+    const membersResult = await query("SELECT id, name, email FROM users ORDER BY name DESC");
 
     res.json({
       totalMembers,

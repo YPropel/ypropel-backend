@@ -4277,6 +4277,53 @@ app.get(
 //-------------------------------------------------------------------------
 //------------------------END of Admin BackEnd routes----------------------------
 
+//================= Amazon AFfiliate YPropel shop ===================
+// PUBLIC: list categories
+app.get("/shop/categories", asyncHandler(async (req, res) => {
+  const r = await query(`SELECT id, slug, name, description FROM shop_categories ORDER BY name ASC`);
+  res.json(r.rows);
+}));
+
+// PUBLIC: list products by category slug
+app.get("/shop/products", asyncHandler(async (req, res) => {
+  const { category } = req.query; // slug
+  if (!category) return res.status(400).json({ error: "category (slug) is required" });
+
+  const r = await query(
+    `SELECT p.id, p.title, p.note, p.price_text, p.image_url, p.affiliate_url
+     FROM shop_products p
+     JOIN shop_categories c ON c.id = p.category_id
+     WHERE c.slug = $1 AND p.is_active = TRUE
+     ORDER BY p.created_at DESC`,
+    [String(category)]
+  );
+  res.json(r.rows);
+}));
+
+// ADMIN: create product
+app.post("/admin/shop/products",
+  authenticateToken,
+  asyncHandler(async (req, res) => {
+    if (!req.user?.isAdmin) return res.status(403).json({ error: "Admins only" });
+    const { category_slug, title, note, price_text, image_url, affiliate_url } = req.body || {};
+    if (!category_slug || !title || !image_url || !affiliate_url) {
+      return res.status(400).json({ error: "category_slug, title, image_url, affiliate_url are required" });
+    }
+    const cat = await query(`SELECT id FROM shop_categories WHERE slug=$1`, [category_slug]);
+    if (cat.rowCount === 0) return res.status(400).json({ error: "Invalid category_slug" });
+
+    const ins = await query(
+      `INSERT INTO shop_products (category_id, title, note, price_text, image_url, affiliate_url)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+      [cat.rows[0].id, title, note || null, price_text || null, image_url, affiliate_url]
+    );
+    res.json({ success: true, id: ins.rows[0].id });
+  })
+);
+
+
+//================== End of YPropel shop Amazon ======================
+
 
 
 //-------------------Companies Profiles and adding jobs---------------------------

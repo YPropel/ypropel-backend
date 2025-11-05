@@ -3479,16 +3479,15 @@ function sha1(s: string) {
   return crypto.createHash("sha1").update(s).digest("hex");
 }
 
-/** Categorize job from title (tweak as you wish) */
+// Very simple category inference from title (tune freely)
 function categorizeTitle(title: string): string {
   const t = (title || "").toLowerCase();
-
   if (t.includes("software") || t.includes("developer") || t.includes("engineer")) return "Software Engineering";
-  if (t.includes("data scientist") || t.includes("data analyst") || t.includes("business intelligence") || t.includes("analytics")) return "Data / Analytics";
+  if (t.includes("data") && (t.includes("analyst") || t.includes("science"))) return "Data / Analytics";
   if (t.includes("marketing") || t.includes("growth") || t.includes("brand")) return "Marketing";
   if (t.includes("social media") || t.includes("content")) return "Social Media";
   if (t.includes("finance") || t.includes("accounting")) return "Finance";
-  if (t.includes("sales") || t.includes("account executive") || t.includes("business development")) return "Sales";
+  if (t.includes("sales") || t.includes("business development")) return "Sales";
   if (t.includes("product manager") || t.includes("product management")) return "Product Management";
   if (t.includes("design") || t.includes("ux") || t.includes("ui")) return "Design";
   if (t.includes("hr") || t.includes("recruit")) return "HR / Recruiting";
@@ -3497,52 +3496,47 @@ function categorizeTitle(title: string): string {
   return "General";
 }
 
-/** Split combined location text into city/state/country best-effort */
+// Split a location string into {city,state,country}
 function splitLocation(raw: string) {
   const val = (raw || "").trim();
-  if (!val) return { city: null, state: null, country: null, label: "" };
-
-  // Common special case
-  if (/^remote$/i.test(val)) return { city: null, state: null, country: "Remote", label: "Remote" };
+  if (!val) return { city: null, state: null, country: null };
+  if (/^remote$/i.test(val)) return { city: null, state: null, country: "Remote" };
 
   const parts = val.split(",").map((p) => p.trim()).filter(Boolean);
-
-  let city: string | null = null;
-  let state: string | null = null;
-  let country: string | null = null;
-
-  if (parts.length === 3) {
-    // City, State/Region, Country
-    [city, state, country] = parts as [string, string, string];
-  } else if (parts.length === 2) {
-    // City, State  OR  City, Country
-    if (/^[A-Za-z]{2}$/.test(parts[1])) {
-      city = parts[0];
-      state = parts[1];
-      country = "United States";
-    } else {
-      city = parts[0];
-      state = null;
-      country = parts[1];
-    }
-  } else if (parts.length === 1) {
-    // Could be a country (e.g. "United States") or single city
-    country = parts[0];
+  if (parts.length === 3) return { city: parts[0] || null, state: parts[1] || null, country: parts[2] || null };
+  if (parts.length === 2) {
+    if (/^[A-Za-z]{2}$/.test(parts[1])) return { city: parts[0] || null, state: parts[1], country: "United States" };
+    return { city: parts[0] || null, state: null, country: parts[1] || null };
   }
-
-  // Build a human label if not remote
-  const label = [city, state, country].filter(Boolean).join(", ");
-  return { city, state, country, label };
+  if (parts.length === 1) return { city: null, state: null, country: parts[0] || null };
+  return { city: null, state: null, country: null };
 }
 
-/** Decide plan/status defaults for imported jobs */
-function inferPlanAndStatus() {
-  return {
-    plan_type: "free" as const,
-    status: "published" as const,
-    is_active: true,
-    expires_in_days: 30,
-  };
+// BEST-EFFORT: pull a string field from multiple possible column names
+function firstOf(r: any, keys: string[]): string {
+  for (const k of keys) {
+    const v = r[k];
+    if (v !== undefined && v !== null && String(v).trim() !== "") return String(v).trim();
+  }
+  return "";
+}
+
+// Get OR create a company by name (case-insensitive)
+async function getOrCreateCompanyByName(name: string, ownerUserId: number | null) {
+  const nm = (name || "").trim();
+  if (!nm) return { id: null, name: null };
+
+  const existing = await query(
+    `SELECT id, name FROM companies WHERE LOWER(name) = LOWER($1) LIMIT 1`,
+    [nm]
+  );
+  if (existing && existing.rows && existing.rows.length > 0) return existing.rows[0];
+
+  const ins = await query(
+    `INSERT INTO companies (name, user_id, created_at) VALUES ($1, $2, NOW()) RETURNING id, name`,
+    [nm, ownerUserId || null]
+  );
+  return ins.rows[0];
 }
 
 app.post(
@@ -3550,21 +3544,16 @@ app.post(
   authenticateToken,
   uploadCsv.single("file"),
   asyncHandler(async (req: Request, res: Response) => {
-    if (!req.user?.isAdmin) {
-      return res.status(403).json({ error: "Admins only" });
-    }
-    if (!req.file) {
-      return res.status(400).json({ error: "CSV file is required (field name 'file')." });
-    }
+    if (!req.user?.isAdmin) return res.status(403).json({ error: "Admins only" });
+    if (!req.file) return res.status(400).json({ error: "CSV file is required (field name 'file')." });
 
-    // Parse the CSV
     let rows: any[] = [];
     try {
       rows = csvParse(req.file.buffer.toString("utf8"), {
-  columns: true,
-  skip_empty_lines: true,
-  trim: true,
-      }) as any[];
+        columns: true,
+        skip_empty_lines: true,
+        trim: true,
+      });
     } catch (err) {
       console.error("CSV parse error:", err);
       return res.status(400).json({ error: "Invalid CSV format." });
@@ -3573,93 +3562,92 @@ app.post(
     let inserted = 0;
     let skippedExisting = 0;
     let failed = 0;
+    let skippedExpired = 0;
 
     for (const r of rows) {
       try {
-        // Map likely CSV fields (Apify / Indeed)
-        const title: string = (r.title ?? "").toString().trim();
-        const company: string = (r.company ?? r.company_name ?? "").toString().trim();
+        // Map your CSV columns
+        // title
+        const title = firstOf(r, ["title", "positionName"]);
+        // company
+        const company = firstOf(r, ["company", "companyName"]);
+        // apply URL
+        const applyUrl = firstOf(r, ["url", "apply_url", "link", "externalApplyLink"]);
+        // description (if present)
+        const description = firstOf(r, ["description", "full_description", "jobDescription"]);
+        // salary
+        const salary = firstOf(r, ["salary", "compensation", "baseSalary"]);
+        // expired?
+        const expiredStr = firstOf(r, ["isExpired"]).toLowerCase();
+        const isExpired = ["true", "1", "yes"].includes(expiredStr);
+        if (isExpired) {
+          skippedExpired++;
+          continue;
+        }
 
-        // Try typical link fields used by scrapers
-        const applyUrl: string =
-          (r.url ?? r.apply_url ?? r.link ?? r.jobUrl ?? "").toString().trim();
+        // job type (collect jobType/0, jobType/1, jobType/2 if present)
+        const jt0 = r["jobType/0"] ? String(r["jobType/0"]).toLowerCase() : "";
+        const jt1 = r["jobType/1"] ? String(r["jobType/1"]).toLowerCase() : "";
+        const jt2 = r["jobType/2"] ? String(r["jobType/2"]).toLowerCase() : "";
+        const jtAll = [jt0, jt1, jt2].filter(Boolean).join("|");
 
-        const description: string =
-          (r.description ?? r.full_description ?? r.descriptionHtml ?? r.snippet ?? "").toString();
-
-        const salary: string = (r.salary ?? r.compensation ?? "").toString();
-
-        // Job type normalization
-        const titleLc = title.toLowerCase();
         let normalizedType: "internship" | "entry_level" | "hourly" = "entry_level";
-        if (titleLc.includes("intern")) normalizedType = "internship";
-        if (titleLc.includes("hourly") || /hour/i.test(salary)) normalizedType = "hourly";
+        const lowTitle = title.toLowerCase();
+        if (lowTitle.includes("intern") || jtAll.includes("intern")) normalizedType = "internship";
+        if (lowTitle.includes("hourly") || /hour/i.test(salary)) normalizedType = "hourly";
 
-        // Source / external ID to dedupe
-        const sourceJobId: string =
-          (r.id ?? r.job_id ?? r.external_id ?? applyUrl).toString().trim();
+        // location
+        const locationRaw = firstOf(r, ["location", "city_state_country", "place"]);
+        let locationLabel = "Remote";
+        let { city, state, country } = splitLocation(locationRaw);
+        if (!/^remote$/i.test(locationRaw) && locationRaw) locationLabel = locationRaw;
 
-        // Guard for minimal data
+        // category
+        const category = categorizeTitle(title);
+
+        // minimum required
         if (!title || !applyUrl) {
           failed++;
           continue;
         }
 
-        // De-dupe by source_job_id (rows length check, not rowCount)
-        const existing = await query(`SELECT 1 FROM jobs WHERE source_job_id = $1 LIMIT 1`, [
-          sourceJobId,
-        ]);
-        if (existing.rows && existing.rows.length > 0) {
+        // dedupe key: prefer explicit id, else hash of URL
+        const sourceJobId =
+          firstOf(r, ["id", "job_id", "external_id"]) || `sha1:${sha1(applyUrl)}`;
+
+        const existing = await query(`SELECT 1 FROM jobs WHERE source_job_id = $1 LIMIT 1`, [sourceJobId]);
+        if (existing && existing.rows && existing.rows.length > 0) {
           skippedExisting++;
           continue;
         }
 
-        // Location mapping (CSV has combined location; we split it)
-        const locationRaw = (r.location ?? r.city_state_country ?? r.place ?? "").toString().trim();
-        const loc = splitLocation(locationRaw);
+        // ensure company exists
+        const comp = await getOrCreateCompanyByName(company, req.user.userId);
+        const company_id = comp.id || null;
 
-        // If remote, present "Remote" and set country default if missing
-        const locationLabel =
-          loc.label ||
-          (normalizedType === "hourly" ? "Onsite" : (loc.country === "Remote" ? "Remote" : "")) ||
-          locationRaw ||
-          "Remote";
-
-        const country =
-          loc.country ||
-          (locationLabel === "Remote" ? "United States" : null); // default country if remote (change if you want)
-
-        const category = categorizeTitle(title);
-
-        const { plan_type, status, is_active, expires_in_days } = inferPlanAndStatus();
-
-        // Insert
         await query(
           `INSERT INTO jobs
             (title, description, category, company, location, requirements, apply_url, posted_by,
-             posted_at, is_active, expires_at, salary, job_type, country, state, city, source_job_id, status, plan_type, is_featured)
+             posted_at, is_active, expires_at, salary, job_type, country, state, city, source_job_id, status, plan_type, is_featured, company_id)
            VALUES
             ($1,$2,$3,$4,$5,$6,$7,$8,
-             NOW(), $9, NOW() + ($10 || ' days')::interval, $11, $12, $13, $14, $15, $16, $17, $18, FALSE)`,
+             NOW(), TRUE, NOW() + INTERVAL '30 days', $9, $10, $11, $12, $13, $14, 'published', 'free', FALSE, $15)`,
           [
-            title,                         // $1
-            description || null,           // $2
-            category,                      // $3
-            company || null,               // $4
-            locationLabel,                 // $5
-            null,                          // requirements ($6) – CSV usually not structured, keep null
-            applyUrl,                      // $7
-            req.user!.userId,              // $8 posted_by = admin importing
-            is_active,                     // $9
-            String(expires_in_days),       // $10
-            salary || null,                // $11
-            normalizedType,                // $12 job_type (NOT NULL in schema)
-            country || null,               // $13
-            loc.state || null,             // $14
-            loc.city || null,              // $15
-            sourceJobId,                   // $16
-            status,                        // $17
-            plan_type,                     // $18
+            title,
+            description || null,
+            category,
+            company || null,
+            locationLabel,
+            null, // requirements unavailable from this CSV
+            applyUrl,
+            req.user.userId,
+            salary || null,
+            normalizedType,
+            country || (locationLabel === "Remote" ? "United States" : null),
+            state || null,
+            city || null,
+            sourceJobId,
+            company_id,
           ]
         );
 
@@ -3670,11 +3658,9 @@ app.post(
       }
     }
 
-    res.json({ success: true, inserted, skippedExisting, failed, total: rows.length });
+    res.json({ success: true, inserted, skippedExisting, skippedExpired, failed, total: rows.length });
   })
 );
-
-
 //======================================================================
 
 //-------------- Public route get all job liting to users -------------------

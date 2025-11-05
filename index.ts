@@ -5,13 +5,22 @@ import cors from "cors";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { query } from "./db";
+// ======= Admin: Import Indeed CSV -> jobs =======
 import multer from "multer";
+import crypto from "crypto";
+import { parse } from "csv-parse/sync";
+import { parse as csvParse } from "csv-parse/sync";
+
+
 import path from "path";
 import adminRoutes from "./adminbackend/BackendRoutes"; //--adminbackendroute
 import { OAuth2Client } from "google-auth-library";
 import { Pool } from "pg";
 import rateLimit from "express-rate-limit";
 import Stripe from "stripe";
+
+
+
 
 
 
@@ -259,76 +268,6 @@ app.use(async (req: Request, res: Response, next: NextFunction) => {
 
 
 
-//-------------------------------
-// ------Webhook route to handle Stripe events (e.g., checkout session completed)
-// Skip authentication for the /webhook route
-/*app.use("/webhook", (req, res, next) => {
-  console.log("Skipping authentication for webhook route");
-  next();
-}); 
-
-
-
-// Webhook route
-app.post("/webhook", express.raw({ type: "application/json" }), async (req: Request, res: Response): Promise<void> => {
-  const sig = req.headers["stripe-signature"];
-
-  console.log("Webhook received at /webhook with path:", req.originalUrl);  // Log the request URL
-  console.log("Received event:", req.body); // Log the event for debugging
-
-  if (typeof sig !== "string") {
-    console.error("No valid Stripe signature found.");
-    return; 
-  }
-
-  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
-  if (!webhookSecret) {
-    console.error("Webhook secret is missing.");
-    return; 
-  }
-
-  try {
-    const event = stripe.webhooks.constructEvent(req.body, sig, webhookSecret);
-    console.log("Received event:", event); // Log the event for debugging
-
-    // Handle the event when checkout session is completed
-    if (event.type === "checkout.session.completed") {
-      const session = event.data.object as Stripe.Checkout.Session;
-      const customerEmail = session.customer_email;
-
-      if (!customerEmail) {
-        console.error("No customer email found.");
-        res.status(400).send("No customer email found.");
-        return;  // Exit after sending response
-      }
-
-      // Update the user's 'is_premium' status to true using their email
-      const updateUserQuery = `UPDATE users SET is_premium = true WHERE email = $1`;
-      const result = await query(updateUserQuery, [customerEmail]);
-
-        if (result && result.rowCount && result.rowCount > 0) {
-        console.log(`User with email ${customerEmail} is now marked as premium.`);
-      } else {
-        console.log(`No user found with email ${customerEmail}`);
-      }
-
-      // Send a success response
-      res.status(200).send("Webhook processed successfully.");
-    } else {
-      // Handle other events (optional)
-      res.status(200).send("Event type not handled.");
-      return;
-    }
-  } catch (err) {
-    const error = err as Error;
-    console.error("Webhook error:", error.message);
-    res.status(400).send(`Webhook error: ${error.message}`);
-  }
-});*/
-
-
-
-//----------------------------
 
 // ===================
 // Begin your full original route handlers here exactly as you sent them:
@@ -3530,7 +3469,215 @@ app.delete(
   })
 );
 
-//----Public route get all job liting to users
+//==================== Admin upload CSV file to add jobs ==================
+//------------------------- Admin only --------------------------------
+
+const uploadCsv = multer({ storage: multer.memoryStorage() });
+
+// Optional helper, not used for hashing here but you had it — keeping it in case you need later
+function sha1(s: string) {
+  return crypto.createHash("sha1").update(s).digest("hex");
+}
+
+/** Categorize job from title (tweak as you wish) */
+function categorizeTitle(title: string): string {
+  const t = (title || "").toLowerCase();
+
+  if (t.includes("software") || t.includes("developer") || t.includes("engineer")) return "Software Engineering";
+  if (t.includes("data scientist") || t.includes("data analyst") || t.includes("business intelligence") || t.includes("analytics")) return "Data / Analytics";
+  if (t.includes("marketing") || t.includes("growth") || t.includes("brand")) return "Marketing";
+  if (t.includes("social media") || t.includes("content")) return "Social Media";
+  if (t.includes("finance") || t.includes("accounting")) return "Finance";
+  if (t.includes("sales") || t.includes("account executive") || t.includes("business development")) return "Sales";
+  if (t.includes("product manager") || t.includes("product management")) return "Product Management";
+  if (t.includes("design") || t.includes("ux") || t.includes("ui")) return "Design";
+  if (t.includes("hr") || t.includes("recruit")) return "HR / Recruiting";
+  if (t.includes("biology") || t.includes("lab") || t.includes("research")) return "Research";
+  if (t.includes("intern")) return "Internship";
+  return "General";
+}
+
+/** Split combined location text into city/state/country best-effort */
+function splitLocation(raw: string) {
+  const val = (raw || "").trim();
+  if (!val) return { city: null, state: null, country: null, label: "" };
+
+  // Common special case
+  if (/^remote$/i.test(val)) return { city: null, state: null, country: "Remote", label: "Remote" };
+
+  const parts = val.split(",").map((p) => p.trim()).filter(Boolean);
+
+  let city: string | null = null;
+  let state: string | null = null;
+  let country: string | null = null;
+
+  if (parts.length === 3) {
+    // City, State/Region, Country
+    [city, state, country] = parts as [string, string, string];
+  } else if (parts.length === 2) {
+    // City, State  OR  City, Country
+    if (/^[A-Za-z]{2}$/.test(parts[1])) {
+      city = parts[0];
+      state = parts[1];
+      country = "United States";
+    } else {
+      city = parts[0];
+      state = null;
+      country = parts[1];
+    }
+  } else if (parts.length === 1) {
+    // Could be a country (e.g. "United States") or single city
+    country = parts[0];
+  }
+
+  // Build a human label if not remote
+  const label = [city, state, country].filter(Boolean).join(", ");
+  return { city, state, country, label };
+}
+
+/** Decide plan/status defaults for imported jobs */
+function inferPlanAndStatus() {
+  return {
+    plan_type: "free" as const,
+    status: "published" as const,
+    is_active: true,
+    expires_in_days: 30,
+  };
+}
+
+app.post(
+  "/admin/import/indeed",
+  authenticateToken,
+  uploadCsv.single("file"),
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user?.isAdmin) {
+      return res.status(403).json({ error: "Admins only" });
+    }
+    if (!req.file) {
+      return res.status(400).json({ error: "CSV file is required (field name 'file')." });
+    }
+
+    // Parse the CSV
+    let rows: any[] = [];
+    try {
+      rows = csvParse(req.file.buffer.toString("utf8"), {
+  columns: true,
+  skip_empty_lines: true,
+  trim: true,
+      }) as any[];
+    } catch (err) {
+      console.error("CSV parse error:", err);
+      return res.status(400).json({ error: "Invalid CSV format." });
+    }
+
+    let inserted = 0;
+    let skippedExisting = 0;
+    let failed = 0;
+
+    for (const r of rows) {
+      try {
+        // Map likely CSV fields (Apify / Indeed)
+        const title: string = (r.title ?? "").toString().trim();
+        const company: string = (r.company ?? r.company_name ?? "").toString().trim();
+
+        // Try typical link fields used by scrapers
+        const applyUrl: string =
+          (r.url ?? r.apply_url ?? r.link ?? r.jobUrl ?? "").toString().trim();
+
+        const description: string =
+          (r.description ?? r.full_description ?? r.descriptionHtml ?? r.snippet ?? "").toString();
+
+        const salary: string = (r.salary ?? r.compensation ?? "").toString();
+
+        // Job type normalization
+        const titleLc = title.toLowerCase();
+        let normalizedType: "internship" | "entry_level" | "hourly" = "entry_level";
+        if (titleLc.includes("intern")) normalizedType = "internship";
+        if (titleLc.includes("hourly") || /hour/i.test(salary)) normalizedType = "hourly";
+
+        // Source / external ID to dedupe
+        const sourceJobId: string =
+          (r.id ?? r.job_id ?? r.external_id ?? applyUrl).toString().trim();
+
+        // Guard for minimal data
+        if (!title || !applyUrl) {
+          failed++;
+          continue;
+        }
+
+        // De-dupe by source_job_id (rows length check, not rowCount)
+        const existing = await query(`SELECT 1 FROM jobs WHERE source_job_id = $1 LIMIT 1`, [
+          sourceJobId,
+        ]);
+        if (existing.rows && existing.rows.length > 0) {
+          skippedExisting++;
+          continue;
+        }
+
+        // Location mapping (CSV has combined location; we split it)
+        const locationRaw = (r.location ?? r.city_state_country ?? r.place ?? "").toString().trim();
+        const loc = splitLocation(locationRaw);
+
+        // If remote, present "Remote" and set country default if missing
+        const locationLabel =
+          loc.label ||
+          (normalizedType === "hourly" ? "Onsite" : (loc.country === "Remote" ? "Remote" : "")) ||
+          locationRaw ||
+          "Remote";
+
+        const country =
+          loc.country ||
+          (locationLabel === "Remote" ? "United States" : null); // default country if remote (change if you want)
+
+        const category = categorizeTitle(title);
+
+        const { plan_type, status, is_active, expires_in_days } = inferPlanAndStatus();
+
+        // Insert
+        await query(
+          `INSERT INTO jobs
+            (title, description, category, company, location, requirements, apply_url, posted_by,
+             posted_at, is_active, expires_at, salary, job_type, country, state, city, source_job_id, status, plan_type, is_featured)
+           VALUES
+            ($1,$2,$3,$4,$5,$6,$7,$8,
+             NOW(), $9, NOW() + ($10 || ' days')::interval, $11, $12, $13, $14, $15, $16, $17, $18, FALSE)`,
+          [
+            title,                         // $1
+            description || null,           // $2
+            category,                      // $3
+            company || null,               // $4
+            locationLabel,                 // $5
+            null,                          // requirements ($6) – CSV usually not structured, keep null
+            applyUrl,                      // $7
+            req.user!.userId,              // $8 posted_by = admin importing
+            is_active,                     // $9
+            String(expires_in_days),       // $10
+            salary || null,                // $11
+            normalizedType,                // $12 job_type (NOT NULL in schema)
+            country || null,               // $13
+            loc.state || null,             // $14
+            loc.city || null,              // $15
+            sourceJobId,                   // $16
+            status,                        // $17
+            plan_type,                     // $18
+          ]
+        );
+
+        inserted++;
+      } catch (e) {
+        console.error("import row failed:", e);
+        failed++;
+      }
+    }
+
+    res.json({ success: true, inserted, skippedExisting, failed, total: rows.length });
+  })
+);
+
+
+//======================================================================
+
+//-------------- Public route get all job liting to users -------------------
 app.get(
   "/jobs",
   asyncHandler(async (req: Request, res: Response) => {

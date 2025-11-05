@@ -9,7 +9,9 @@ import { query } from "./db";
 import multer from "multer";
 import crypto from "crypto";
 import { parse } from "csv-parse/sync";
-import { parse as csvParse } from "csv-parse/sync";
+//import { parse as csvParse } from "csv-parse/sync";
+import { parse as parseCsv } from "csv-parse/sync";
+
 
 
 import path from "path";
@@ -3471,32 +3473,88 @@ app.delete(
 
 //==================== Admin upload CSV file to add jobs ==================
 //------------------------- Admin only --------------------------------
-
+// ================== Admin CSV Import: Indeed/Apify ===================
 const uploadCsv = multer({ storage: multer.memoryStorage() });
 
-// Optional helper, not used for hashing here but you had it — keeping it in case you need later
-function isTruthyFlag(v: any): boolean {
-  const s = (v ?? "").toString().trim().toLowerCase();
-  return s === "1" || s === "true" || s === "yes" || s === "y" || s === "internship";
+function sha1(s: string) {
+  return crypto.createHash("sha1").update(s).digest("hex");
 }
 
-function buildSourceId(applyUrl: string, title: string, company: string) {
-  // stable id for dedupe even if csv lacks an ID
-  const basis = (applyUrl || "").trim() || `${title}::${company}`.trim();
-  return sha1(basis);
+// Very simple category guesser from title. Tweak freely.
+function categorizeTitle(title: string): string {
+  const t = (title || "").toLowerCase();
+  if (t.includes("software") || t.includes("developer") || t.includes("engineer")) return "Software Engineering";
+  if (t.includes("data") && (t.includes("analyst") || t.includes("science"))) return "Data / Analytics";
+  if (t.includes("marketing") || t.includes("growth") || t.includes("brand")) return "Marketing";
+  if (t.includes("social media") || t.includes("content")) return "Social Media";
+  if (t.includes("finance") || t.includes("accounting")) return "Finance";
+  if (t.includes("sales") || t.includes("business development")) return "Sales";
+  if (t.includes("product manager") || t.includes("product management")) return "Product Management";
+  if (t.includes("design") || t.includes("ux") || t.includes("ui")) return "Design";
+  if (t.includes("hr") || t.includes("recruit")) return "HR / Recruiting";
+  if (t.includes("biology") || t.includes("lab") || t.includes("research")) return "Research";
+  if (t.includes("intern")) return "Internship";
+  return "General";
+}
+
+// Split "City, ST, Country" (or similar) into parts. Also handles "Remote".
+function splitLocation(raw: string) {
+  const val = (raw || "").trim();
+  if (!val) return { city: null, state: null, country: null, label: "" };
+  if (/^remote$/i.test(val)) return { city: null, state: null, country: "Remote", label: "Remote" };
+
+  const parts = val.split(",").map((p) => p.trim()).filter(Boolean);
+  let city: string | null = null;
+  let state: string | null = null;
+  let country: string | null = null;
+
+  if (parts.length === 3) {
+    [city, state, country] = parts;
+  } else if (parts.length === 2) {
+    [city, state] = parts;
+    if (!/^[A-Za-z]{2}$/.test(state)) { // second may be country instead
+      country = state;
+      state = null;
+    } else {
+      country = "United States";
+    }
+  } else if (parts.length === 1) {
+    country = parts[0];
+  }
+
+  return { city, state, country, label: val };
+}
+
+// Ensure company exists (case-insensitive). Owner is the admin importing.
+async function getOrCreateCompanyByName(name: string, ownerUserId: number | null) {
+  const nm = (name || "").trim();
+  if (!nm) return { id: null as any, name: null as any };
+
+  const existing = await query(
+    `SELECT id, name FROM companies WHERE LOWER(name) = LOWER($1) LIMIT 1`,
+    [nm]
+  );
+  if (existing?.rows?.length) return existing.rows[0];
+
+  const ins = await query(
+    `INSERT INTO companies (name, user_id, created_at) VALUES ($1, $2, NOW()) RETURNING id, name`,
+    [nm, ownerUserId]
+  );
+  return ins.rows[0];
 }
 
 app.post(
   "/admin/import/indeed",
   authenticateToken,
   uploadCsv.single("file"),
-  asyncHandler(async (req: Request, res: Response) => {
+  asyncHandler(async (req, res) => {
     if (!req.user?.isAdmin) return res.status(403).json({ error: "Admins only" });
     if (!req.file) return res.status(400).json({ error: "CSV file is required (field name 'file')." });
 
+    // Parse CSV (expects headers like: positionName, company, externalApplyLink, jobType/1, location, postedAt, salary, isExpired)
     let rows: any[] = [];
     try {
-      rows = csvParse(req.file.buffer.toString("utf8"), {
+      rows = parseCsv(req.file.buffer.toString("utf8"), {
         columns: true,
         skip_empty_lines: true,
         trim: true,
@@ -3509,83 +3567,87 @@ app.post(
     let inserted = 0;
     let skippedExisting = 0;
     let failed = 0;
-    const failReasons: string[] = [];
+    const failReasons: Array<{ row: any; reason: string }> = [];
 
     for (const r of rows) {
       try {
-        // --- Map fields from your file spec ---
-        const title: string = (r["positionName"] ?? "").toString().trim();
-        const companyName: string = (r["company"] ?? "").toString().trim();
-        const applyUrl: string = (r["externalApplyLink"] ?? "").toString().trim();
-        const salary: string = (r["salary"] ?? "").toString().trim();
-        const locationRaw: string = (r["location"] ?? "").toString().trim();
-        const internshipFlag = isTruthyFlag(r["jobType/1"]); // true if internship
-        const isExpired = isTruthyFlag(r["isExpired"]); // treat truthy as expired
+        const title = (r["positionName"] || r["title"] || "").toString().trim();
+        const companyName = (r["company"] || "").toString().trim();
+        const applyUrl = (r["externalApplyLink"] || r["apply_url"] || r["url"] || "").toString().trim();
+        const internshipFlagRaw = (r["jobType/1"] ?? "").toString().toLowerCase();
+        const locationRaw = (r["location"] || "").toString().trim();
+        const salary = (r["salary"] || "").toString().trim();
+        const postedAtRaw = (r["postedAt"] || "").toString().trim();
+        const isExpiredRaw = (r["isExpired"] || "").toString().toLowerCase();
 
-        // Minimal validation
-        if (!title) {
+        if (!title || !applyUrl) {
           failed++;
-          failReasons.push("Row skipped: missing positionName (title).");
-          continue;
-        }
-        if (!applyUrl) {
-          failed++;
-          failReasons.push(`Row skipped: missing externalApplyLink for title="${title}".`);
+          failReasons.push({ row: r, reason: "Missing required title/applyUrl" });
           continue;
         }
 
-        // Build a stable source id (dedupe)
-        const sourceJobId = buildSourceId(applyUrl, title, companyName);
-
-        // De-dupe by source_job_id
-        const existing = await query(`SELECT 1 FROM jobs WHERE source_job_id = $1 LIMIT 1`, [sourceJobId]);
-        if (existing.rows && existing.rows.length > 0) {
+        // De-dupe by apply_url OR generated source_job_id
+        const sourceJobId = sha1(`${title}::${companyName}::${applyUrl}`);
+        const check = await query(
+          `SELECT 1 FROM jobs WHERE source_job_id = $1 OR apply_url = $2 LIMIT 1`,
+          [sourceJobId, applyUrl]
+        );
+        if (check?.rows?.length) {
           skippedExisting++;
           continue;
         }
 
-        // Location split + label
-        const { city, state, country } = splitLocation(locationRaw);
-        const locationLabel =
-          /^remote$/i.test(locationRaw) ? "Remote" : (locationRaw || [city, state, country].filter(Boolean).join(", "));
+        // job type
+        let job_type: "internship" | "entry_level" | "hourly" = "entry_level";
+        if (["true", "1", "yes", "internship"].includes(internshipFlagRaw)) job_type = "internship";
+        const tLower = title.toLowerCase();
+        if (job_type !== "internship") {
+          if (tLower.includes("intern")) job_type = "internship";
+          else if (tLower.includes("hourly")) job_type = "hourly";
+        }
 
-        // Job type
-        let jobType: "internship" | "entry_level" | "hourly" = internshipFlag ? "internship" : "entry_level";
-        if (/hour/i.test(salary)) jobType = "hourly";
+        // active/expired
+        const is_active = !["true", "1", "yes"].includes(isExpiredRaw);
 
-        // Category (very rough)
+        // posted_at best effort
+        let posted_at: Date = new Date();
+        const tryDate = Date.parse(postedAtRaw);
+        if (!Number.isNaN(tryDate)) posted_at = new Date(tryDate);
+
+        // location split
+        const { city, state, country, label } = splitLocation(locationRaw);
+        const locationLabel = label || (job_type === "hourly" ? "Onsite" : "Remote");
+
+        // category guess
         const category = categorizeTitle(title);
 
-        // Company: create if needed (owner set to admin)
-        const companyRec = await getOrCreateCompanyByName(companyName, req.user.userId);
-        const company_id = companyRec?.id || null;
+        // ensure company
+        const company = await getOrCreateCompanyByName(companyName, req.user.userId);
+        const company_id = company?.id ?? null;
 
-        // Active/expired
-        const is_active = !isExpired;
-
-        // Insert
         await query(
           `INSERT INTO jobs
             (title, description, category, company, location, requirements, apply_url,
              posted_by, posted_at, is_active, expires_at, salary, job_type,
              country, state, city, source_job_id, status, company_id, plan_type, is_featured)
            VALUES
-            ($1, $2, $3, $4, $5, $6, $7,
-             $8, NOW(), $9, CASE WHEN $9 THEN NOW() + INTERVAL '30 days' ELSE NOW() END,
-             $10, $11, $12, $13, $14, $15, 'published', $16, 'free', FALSE)`,
+            ($1,        $2,          $3,       $4,      $5,       $6,           $7,
+             $8,        $9,          $10,      NOW() + INTERVAL '30 days', $11, $12,
+             $13,     $14,   $15,   $16,          'published', $17,      'free',    FALSE)`,
           [
             title,
-            null, // description not provided in this CSV
+            r["description"] || r["full_description"] || null,
             category,
-            companyName || companyRec?.name || null,
-            locationLabel || null,
-            null, // requirements not provided in this CSV
+            companyName || null,
+            locationLabel,
+            null, // requirements
             applyUrl,
-            req.user!.userId, // posted_by admin importer
+            req.user!.userId,
+            posted_at,
             is_active,
             salary || null,
-            jobType,
-            country || null,
+            job_type,
+            country || (locationLabel === "Remote" ? "United States" : null),
             state || null,
             city || null,
             sourceJobId,
@@ -3595,16 +3657,16 @@ app.post(
 
         inserted++;
       } catch (e: any) {
-        console.error("Import row failed:", e);
+        console.error("Row import failed:", e?.message || e);
         failed++;
-        failReasons.push(`Row failed: ${e?.message || e}`);
+        failReasons.push({ row: r, reason: e?.message || "unknown" });
       }
     }
 
     res.json({ success: true, inserted, skippedExisting, failed, total: rows.length, failReasons });
   })
 );
-
+// ================== end CSV Import ===================================
 
 //======================================================================
 

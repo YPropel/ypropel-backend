@@ -3475,12 +3475,11 @@ app.delete(
 //------------------------- Admin only --------------------------------
 // ================== Admin CSV Import: Indeed/Apify ===================
 const uploadCsv = multer({ storage: multer.memoryStorage() });
-
 function sha1(s: string) {
   return crypto.createHash("sha1").update(s).digest("hex");
 }
 
-// Very simple category guesser from title. Tweak freely.
+// Very simple category guesser from title.
 function categorizeTitle(title: string): string {
   const t = (title || "").toLowerCase();
   if (t.includes("software") || t.includes("developer") || t.includes("engineer")) return "Software Engineering";
@@ -3497,7 +3496,7 @@ function categorizeTitle(title: string): string {
   return "General";
 }
 
-// Split "City, ST, Country" (or similar) into parts. Also handles "Remote".
+// Split "City, ST, Country" or similar
 function splitLocation(raw: string) {
   const val = (raw || "").trim();
   if (!val) return { city: null, state: null, country: null, label: "" };
@@ -3512,7 +3511,7 @@ function splitLocation(raw: string) {
     [city, state, country] = parts;
   } else if (parts.length === 2) {
     [city, state] = parts;
-    if (!/^[A-Za-z]{2}$/.test(state)) { // second may be country instead
+    if (!/^[A-Za-z]{2}$/.test(state)) {
       country = state;
       state = null;
     } else {
@@ -3525,7 +3524,7 @@ function splitLocation(raw: string) {
   return { city, state, country, label: val };
 }
 
-// Ensure company exists (case-insensitive). Owner is the admin importing.
+// Ensure company exists
 async function getOrCreateCompanyByName(name: string, ownerUserId: number | null) {
   const nm = (name || "").trim();
   if (!nm) return { id: null as any, name: null as any };
@@ -3575,8 +3574,16 @@ app.post(
     const failReasons: Array<{ row: any; reason: string }> = [];
 
     let rowIndex = 0;
-    for (const r of rows) {
+    for (const originalRow of rows) {
       rowIndex++;
+
+      // 🔥 FIX: Remove BOM (﻿) from header keys
+      const r: any = {};
+      for (const [key, value] of Object.entries(originalRow)) {
+        const cleanKey = key.replace(/^\uFEFF/, ""); // strip BOM
+        r[cleanKey] = value;
+      }
+
       try {
         const title = (r["positionName"] || r["title"] || "").toString().trim();
         const companyName = (r["company"] || "").toString().trim();
@@ -3588,7 +3595,7 @@ app.post(
         const isExpiredRaw = (r["isExpired"] || "").toString().toLowerCase();
 
         console.log(`\n----- Row ${rowIndex} -----`);
-        console.log("raw row:", r);
+        console.log("cleaned row:", r);
         console.log("derived fields:", {
           title,
           companyName,
@@ -3600,6 +3607,7 @@ app.post(
           isExpiredRaw,
         });
 
+        // Required fields
         if (!title || !applyUrl) {
           console.log(`⏭️  Row ${rowIndex} FAILED: missing title or applyUrl`);
           failed++;
@@ -3607,21 +3615,20 @@ app.post(
           continue;
         }
 
+        // dedupe logic
         const sourceJobId = sha1(`${title}::${companyName}::${applyUrl}`);
-        console.log("sourceJobId:", sourceJobId);
-
         const check = await query(
           `SELECT 1 FROM jobs WHERE source_job_id = $1 OR apply_url = $2 LIMIT 1`,
           [sourceJobId, applyUrl]
         );
 
         if (check?.rows?.length) {
-          console.log(`⏭️  Row ${rowIndex} SKIPPED: job already exists (duplicate)`);
+          console.log(`⏭️  Row ${rowIndex} SKIPPED: duplicate job`);
           skippedExisting++;
           continue;
         }
 
-        // job type
+        // detect job type
         let job_type: "internship" | "entry_level" | "hourly" = "entry_level";
         if (["true", "1", "yes", "internship"].includes(internshipFlagRaw)) job_type = "internship";
         const tLower = title.toLowerCase();
@@ -3633,7 +3640,7 @@ app.post(
         // active/expired
         const is_active = !["true", "1", "yes"].includes(isExpiredRaw);
 
-        // posted_at best effort
+        // posted_at parsing
         let posted_at: Date = new Date();
         const tryDate = Date.parse(postedAtRaw);
         if (!Number.isNaN(tryDate)) posted_at = new Date(tryDate);
@@ -3642,7 +3649,7 @@ app.post(
         const { city, state, country, label } = splitLocation(locationRaw);
         const locationLabel = label || (job_type === "hourly" ? "Onsite" : "Remote");
 
-        // category guess
+        // category
         const category = categorizeTitle(title);
 
         // ensure company
@@ -3654,14 +3661,8 @@ app.post(
           companyName,
           applyUrl,
           job_type,
-          is_active,
           posted_at,
-          locationLabel,
-          category,
-          city,
-          state,
-          country,
-          company_id,
+          is_active,
         });
 
         await query(
@@ -3670,9 +3671,9 @@ app.post(
              posted_by, posted_at, is_active, expires_at, salary, job_type,
              country, state, city, source_job_id, status, company_id, plan_type, is_featured)
            VALUES
-            ($1,        $2,          $3,       $4,      $5,       $6,           $7,
-             $8,        $9,          $10,      NOW() + INTERVAL '30 days', $11, $12,
-             $13,       $14,   $15,   $16,          'published', $17,      'free',    FALSE)`,
+            ($1, $2, $3, $4, $5, $6, $7,
+             $8, $9, $10, NOW() + INTERVAL '30 days', $11, $12,
+             $13, $14, $15, $16, 'published', $17, 'free', FALSE)`,
           [
             title,
             r["description"] || r["full_description"] || null,
@@ -3696,10 +3697,10 @@ app.post(
 
         inserted++;
         console.log(`✅ Row ${rowIndex}: INSERTED`);
-      } catch (e: any) {
-        console.error(`❌ Row ${rowIndex} import failed:`, e?.message || e);
+      } catch (err: any) {
+        console.error(`❌ Row ${rowIndex} import failed:`, err?.message || err);
         failed++;
-        failReasons.push({ row: r, reason: e?.message || "unknown" });
+        failReasons.push({ row: r, reason: err?.message || "unknown" });
       }
     }
 
@@ -3709,10 +3710,9 @@ app.post(
     console.log("Failed:", failed);
     console.log("======================\n");
 
-    res.json({ success: true, inserted, skippedExisting, failed, total: rows.length, failReasons });
+    return res.json({ success: true, inserted, skippedExisting, failed, total: rows.length, failReasons });
   })
 );
-
 // ================== end CSV Import ===================================
 
 //======================================================================

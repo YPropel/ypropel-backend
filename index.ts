@@ -3497,28 +3497,34 @@ function categorizeTitle(title: string): string {
   return "General";
 }
 
-// --------- Helper: split location "City, ST, Country" ---------
-function parseLocation(loc: string | undefined) {
-  if (!loc) return { city: null, state: null, country: null };
-  const parts = loc.split(",").map((p) => p.trim()).filter(Boolean);
+// Split "City, ST, Country" (or similar) into parts. Also handles "Remote".
+function splitLocation(raw: string) {
+  const val = (raw || "").trim();
+  if (!val) return { city: null, state: null, country: null, label: "" };
+  if (/^remote$/i.test(val)) return { city: null, state: null, country: "Remote", label: "Remote" };
 
+  const parts = val.split(",").map((p) => p.trim()).filter(Boolean);
   let city: string | null = null;
   let state: string | null = null;
   let country: string | null = null;
 
-  if (parts.length === 1) {
-    city = parts[0];
+  if (parts.length === 3) {
+    [city, state, country] = parts;
   } else if (parts.length === 2) {
-    city = parts[0];
-    state = parts[1];
-  } else if (parts.length >= 3) {
-    city = parts[0];
-    state = parts[1];
-    country = parts[2];
+    [city, state] = parts;
+    if (!/^[A-Za-z]{2}$/.test(state)) { // second may be country instead
+      country = state;
+      state = null;
+    } else {
+      country = "United States";
+    }
+  } else if (parts.length === 1) {
+    country = parts[0];
   }
 
-  return { city, state, country };
+  return { city, state, country, label: val };
 }
+
 // Ensure company exists (case-insensitive). Owner is the admin importing.
 async function getOrCreateCompanyByName(name: string, ownerUserId: number | null) {
   const nm = (name || "").trim();
@@ -3536,189 +3542,177 @@ async function getOrCreateCompanyByName(name: string, ownerUserId: number | null
   );
   return ins.rows[0];
 }
-// --------- Helper: normalize booleans from CSV ---------
-function toBool(value: any): boolean {
-  if (value === undefined || value === null) return false;
-  const v = String(value).trim().toLowerCase();
-  return ["true", "1", "yes", "y"].includes(v);
-}
 
-// --------- Helper: map job type flags to job_type string ---------
-function mapJobType(row: any): string {
-  // CSV headers: jobType/0, jobType/1, jobType/2
-  const t0 = toBool(row["jobType/0"]);
-  const t1 = toBool(row["jobType/1"]); // internship
-  const t2 = toBool(row["jobType/2"]);
-
-  if (t1) return "internship";
-  if (t0 || t2) return "entry-level"; // adjust if you have more specific mapping
-  return "other";
-}
-
-// --------- IMPORT ROUTE ---------
 app.post(
   "/admin/import/indeed",
-  upload.single("file"),
+  authenticateToken,
+  uploadCsv.single("file"),
   asyncHandler(async (req, res) => {
-    if (!req.file) {
-      console.error("❌ No file uploaded");
-      return res.status(400).json({ error: "No file uploaded" });
-    }
+    if (!req.user?.isAdmin) return res.status(403).json({ error: "Admins only" });
+    if (!req.file) return res.status(400).json({ error: "CSV file is required (field name 'file')." });
 
-    console.log("✅ Received Indeed CSV file:", req.file.originalname);
-
-    let records: any[] = [];
+    let rows: any[] = [];
     try {
-      records = parse(req.file.buffer.toString("utf-8"), {
+      rows = parseCsv(req.file.buffer.toString("utf8"), {
         columns: true,
         skip_empty_lines: true,
         trim: true,
       });
-      console.log(`📄 Parsed ${records.length} rows from CSV.`);
-      if (records[0]) {
-        console.log("🔎 First row:", records[0]);
-      }
     } catch (err) {
-      console.error("❌ Error parsing CSV:", err);
-      return res.status(400).json({ error: "Invalid CSV format" });
+      console.error("CSV parse error:", err);
+      return res.status(400).json({ error: "Invalid CSV format." });
+    }
+
+    console.log(`📄 Parsed ${rows.length} rows from CSV.`);
+    if (rows[0]) {
+      console.log("🔎 First row keys:", Object.keys(rows[0]));
+      console.log("🔎 First row sample:", rows[0]);
     }
 
     let inserted = 0;
-    let updated = 0;
-    let skipped = 0;
+    let skippedExisting = 0;
+    let failed = 0;
+    const failReasons: Array<{ row: any; reason: string }> = [];
 
-    for (const [index, row] of records.entries()) {
-      const rowNum = index + 1; // for logging
+    let rowIndex = 0;
+    for (const r of rows) {
+      rowIndex++;
+      try {
+        const title = (r["positionName"] || r["title"] || "").toString().trim();
+        const companyName = (r["company"] || "").toString().trim();
+        const applyUrl = (r["externalApplyLink"] || r["apply_url"] || r["url"] || "").toString().trim();
+        const internshipFlagRaw = (r["jobType/1"] ?? "").toString().toLowerCase();
+        const locationRaw = (r["location"] || "").toString().trim();
+        const salary = (r["salary"] || "").toString().trim();
+        const postedAtRaw = (r["postedAt"] || "").toString().trim();
+        const isExpiredRaw = (r["isExpired"] || "").toString().toLowerCase();
 
-      const positionName = (row.positionName || "").trim();
-      const company = (row.company || "").trim();
-      const externalApplyLink = (row.externalApplyLink || "").trim();
-      const location = row.location as string | undefined;
-      const salary = (row.salary || "").trim();
-      const isExpired = toBool(row.isExpired);
-      const job_type = mapJobType(row);
+        console.log(`\n----- Row ${rowIndex} -----`);
+        console.log("raw row:", r);
+        console.log("derived fields:", {
+          title,
+          companyName,
+          applyUrl,
+          internshipFlagRaw,
+          locationRaw,
+          salary,
+          postedAtRaw,
+          isExpiredRaw,
+        });
 
-      if (!positionName) {
-        console.log(
-          `⏭️  Row ${rowNum}: skipped (missing positionName). Row:`,
-          row
-        );
-        skipped++;
-        continue;
-      }
-      if (!company) {
-        console.log(
-          `⏭️  Row ${rowNum}: skipped (missing company). Row:`,
-          row
-        );
-        skipped++;
-        continue;
-      }
-      if (!externalApplyLink) {
-        console.log(
-          `⏭️  Row ${rowNum}: skipped (missing externalApplyLink). Row:`,
-          row
-        );
-        skipped++;
-        continue;
-      }
-      if (isExpired) {
-        console.log(`⏭️  Row ${rowNum}: skipped (isExpired = true).`);
-        skipped++;
-        continue;
-      }
-
-      const { city, state, country } = parseLocation(location);
-
-      // postedAt can be string like "2025-11-18" or "Just posted"
-      let posted_at: Date | null = null;
-      if (row.postedAt) {
-        const raw = String(row.postedAt).trim();
-        if (/just posted/i.test(raw)) {
-          posted_at = new Date();
-        } else {
-          const d = new Date(raw);
-          if (!isNaN(d.getTime())) {
-            posted_at = d;
-          }
+        if (!title || !applyUrl) {
+          console.log(`⏭️  Row ${rowIndex} FAILED: missing title or applyUrl`);
+          failed++;
+          failReasons.push({ row: r, reason: "Missing required title/applyUrl" });
+          continue;
         }
-      }
 
-      // Here I'm assuming you have a unique constraint on (position_name, company, external_apply_link) or similar.
-      // Adjust WHERE condition to match your real "duplicate" rule.
-      const existing = await query(
-        `
-        SELECT id 
-        FROM jobs
-        WHERE position_name = $1
-          AND company = $2
-          AND external_apply_link = $3
-        LIMIT 1
-      `,
-        [positionName, company, externalApplyLink]
-      );
+        const sourceJobId = sha1(`${title}::${companyName}::${applyUrl}`);
+        console.log("sourceJobId:", sourceJobId);
 
-      if (existing.rows.length > 0) {
-        const jobId = existing.rows[0].id;
-
-        console.log(`🔁 Row ${rowNum}: updating existing job id=${jobId}`);
-
-        await query(
-          `
-          UPDATE jobs
-          SET 
-            job_type = $1,
-            city = $2,
-            state = $3,
-            country = $4,
-            salary = $5,
-            posted_at = COALESCE($6, posted_at),
-            is_active = TRUE,
-            source = 'indeed'
-          WHERE id = $7
-        `,
-          [job_type, city, state, country, salary || null, posted_at, jobId]
+        const check = await query(
+          `SELECT 1 FROM jobs WHERE source_job_id = $1 OR apply_url = $2 LIMIT 1`,
+          [sourceJobId, applyUrl]
         );
 
-        updated++;
-      } else {
-        console.log(
-          `➕ Row ${rowNum}: inserting new job "${positionName}" at "${company}".`
-        );
+        if (check?.rows?.length) {
+          console.log(`⏭️  Row ${rowIndex} SKIPPED: job already exists (duplicate)`);
+          skippedExisting++;
+          continue;
+        }
+
+        // job type
+        let job_type: "internship" | "entry_level" | "hourly" = "entry_level";
+        if (["true", "1", "yes", "internship"].includes(internshipFlagRaw)) job_type = "internship";
+        const tLower = title.toLowerCase();
+        if (job_type !== "internship") {
+          if (tLower.includes("intern")) job_type = "internship";
+          else if (tLower.includes("hourly")) job_type = "hourly";
+        }
+
+        // active/expired
+        const is_active = !["true", "1", "yes"].includes(isExpiredRaw);
+
+        // posted_at best effort
+        let posted_at: Date = new Date();
+        const tryDate = Date.parse(postedAtRaw);
+        if (!Number.isNaN(tryDate)) posted_at = new Date(tryDate);
+
+        // location split
+        const { city, state, country, label } = splitLocation(locationRaw);
+        const locationLabel = label || (job_type === "hourly" ? "Onsite" : "Remote");
+
+        // category guess
+        const category = categorizeTitle(title);
+
+        // ensure company
+        const company = await getOrCreateCompanyByName(companyName, req.user.userId);
+        const company_id = company?.id ?? null;
+
+        console.log("🟢 Inserting job:", {
+          title,
+          companyName,
+          applyUrl,
+          job_type,
+          is_active,
+          posted_at,
+          locationLabel,
+          category,
+          city,
+          state,
+          country,
+          company_id,
+        });
 
         await query(
-          `
-          INSERT INTO jobs
-            (position_name, company, external_apply_link, job_type,
-             city, state, country, salary, posted_at, is_active, source)
-          VALUES
-            ($1, $2, $3, $4,
-             $5, $6, $7, $8, $9, TRUE, 'indeed')
-        `,
+          `INSERT INTO jobs
+            (title, description, category, company, location, requirements, apply_url,
+             posted_by, posted_at, is_active, expires_at, salary, job_type,
+             country, state, city, source_job_id, status, company_id, plan_type, is_featured)
+           VALUES
+            ($1,        $2,          $3,       $4,      $5,       $6,           $7,
+             $8,        $9,          $10,      NOW() + INTERVAL '30 days', $11, $12,
+             $13,       $14,   $15,   $16,          'published', $17,      'free',    FALSE)`,
           [
-            positionName,
-            company,
-            externalApplyLink,
-            job_type,
-            city,
-            state,
-            country,
-            salary || null,
+            title,
+            r["description"] || r["full_description"] || null,
+            category,
+            companyName || null,
+            locationLabel,
+            null, // requirements
+            applyUrl,
+            req.user!.userId,
             posted_at,
+            is_active,
+            salary || null,
+            job_type,
+            country || (locationLabel === "Remote" ? "United States" : null),
+            state || null,
+            city || null,
+            sourceJobId,
+            company_id,
           ]
         );
 
         inserted++;
+        console.log(`✅ Row ${rowIndex}: INSERTED`);
+      } catch (e: any) {
+        console.error(`❌ Row ${rowIndex} import failed:`, e?.message || e);
+        failed++;
+        failReasons.push({ row: r, reason: e?.message || "unknown" });
       }
     }
 
-    console.log(
-      `✅ Import finished. Inserted: ${inserted}, Updated: ${updated}, Skipped: ${skipped}`
-    );
+    console.log(`\n=== IMPORT SUMMARY ===`);
+    console.log("Inserted:", inserted);
+    console.log("SkippedExisting:", skippedExisting);
+    console.log("Failed:", failed);
+    console.log("======================\n");
 
-    return res.json({ inserted, updated, skipped });
+    res.json({ success: true, inserted, skippedExisting, failed, total: rows.length, failReasons });
   })
 );
+
 // ================== end CSV Import ===================================
 
 //======================================================================

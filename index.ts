@@ -326,13 +326,14 @@ app.post(
     }
 
     // Get all users who have not unsubscribed
-    const { rows: users } = await query(
-      `SELECT u.id, u.email, u.name
-       FROM users u
-       LEFT JOIN email_preferences p ON p.user_id = u.id
-       WHERE COALESCE(p.marketing_emails_enabled, TRUE) = TRUE
-         AND u.email IS NOT NULL`
-    );
+   const { rows: users } = await query(
+  `SELECT u.id, u.email, u.name
+   FROM users u
+   LEFT JOIN email_preferences p ON p.user_id = u.id
+   WHERE COALESCE(p.marketing_emails_enabled, TRUE) = TRUE
+     AND u.email IS NOT NULL
+     AND u.email = 'rania.a.omar@gmail.com'`  
+);
 
     let sent = 0;
     let failed = 0;

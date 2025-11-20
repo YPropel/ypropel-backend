@@ -1,23 +1,18 @@
 // src/services/emailService.ts
-import sgMail from "@sendgrid/mail";
-// or your provider of choice
+// Clean version using ONLY Nodemailer (utils/sendEmail.ts)
 
-const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY!;
-const FROM_EMAIL = "no-reply@ypropel.com"; // update to your verified sender
-
-sgMail.setApiKey(SENDGRID_API_KEY);
+import { sendEmail as smtpSendEmail } from "../../utils/sendEmail";
 
 /**
- * Basic email sender.
- * You can expand this later with templates, variables, etc.
+ * Sends an email using the Nodemailer wrapper in utils/sendEmail.ts
+ * This keeps a clean separation and allows for templates later.
  */
 export async function sendEmail(to: string, subject: string, html: string) {
-  const msg = {
-    to,
-    from: FROM_EMAIL,
-    subject,
-    html,
-  };
-
-  await sgMail.send(msg);
+  try {
+    await smtpSendEmail(to, subject, html);
+    console.log(`Email sent to ${to}`);
+  } catch (err) {
+    console.error("Failed to send email:", err);
+    throw err;
+  }
 }

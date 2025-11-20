@@ -275,7 +275,7 @@ app.use(async (req: Request, res: Response, next: NextFunction) => {
 
 
 
-// Email Notifications
+//================= Email Notifications and broadcast ===============/
 
 app.get(
   "/unsubscribe",
@@ -310,7 +310,7 @@ app.get(
 );
 
 
-// -------------------- ADMIN EMAIL BROADCAST --------------------
+// ------- ADMIN EMAIL BROADCAST --------------------
 app.post(
   "/admin/email/broadcast",
   authenticateToken,
@@ -366,8 +366,45 @@ app.post(
     });
   })
 );
+//------- Users Emails notificaitons and email handling based on user preference
+// Track job interest when a logged-in user views/clicks a job
+app.post(
+  "/jobs/:id/interest",
+  authenticateToken,
+  asyncHandler(async (req: Request, res: Response) => {
+    const userId = req.user!.userId;
+    const jobId = parseInt(req.params.id, 10);
 
-//---------emails notification rout end
+    if (isNaN(jobId)) {
+      return res.status(400).json({ error: "Invalid job id" });
+    }
+
+    // Get job_type and category from jobs table
+    const jobRes = await query(
+      "SELECT job_type, category FROM jobs WHERE id = $1",
+      [jobId]
+    );
+
+    if (jobRes.rows.length === 0) {
+      return res.status(404).json({ error: "Job not found" });
+    }
+
+    const { job_type, category } = jobRes.rows[0];
+
+    // Insert interest (ignore if already exists)
+    await query(
+      `INSERT INTO job_interest_events (user_id, job_id, job_type, category)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (user_id, job_id) DO NOTHING`,
+      [userId, jobId, job_type, category]
+    );
+
+    res.json({ success: true });
+  })
+);
+//--------------------------------------
+
+//===================== End of emails notification and broadcast =============
 
 // ===================
 // Begin your full original route handlers here exactly as you sent them:

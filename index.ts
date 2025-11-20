@@ -21,6 +21,10 @@ import { Pool } from "pg";
 import rateLimit from "express-rate-limit";
 import Stripe from "stripe";
 
+//  Email Notifications
+
+import { verifyUnsubscribeToken } from "./utils/unsubscribeTokens";
+import { wrapWithUnsubscribe } from "./src/emailTemplates";
 
 
 
@@ -194,6 +198,7 @@ function authenticateToken(req: Request, res: Response, next: NextFunction): voi
 //----------------------------------
 // Import sendEmail utility here
 import { sendEmail } from "./utils/sendEmail";
+
 app.use(limiter);
 
 //-------------------------------
@@ -270,6 +275,98 @@ app.use(async (req: Request, res: Response, next: NextFunction) => {
 
 
 
+// Email Notifications
+
+app.get(
+  "/unsubscribe",
+  asyncHandler(async (req: Request, res: Response) => {
+    const token = req.query.token as string | undefined;
+    if (!token) return res.status(400).send("Missing unsubscribe token.");
+
+    try {
+      const { userId } = verifyUnsubscribeToken(token);
+
+      await query(
+        `INSERT INTO email_preferences (user_id, marketing_emails_enabled)
+         VALUES ($1, FALSE)
+         ON CONFLICT (user_id)
+         DO UPDATE SET marketing_emails_enabled = FALSE, updated_at = NOW()`,
+        [userId]
+      );
+
+      res.send(`
+        <html>
+          <body style="font-family: system-ui, sans-serif; text-align:center; padding:40px;">
+            <h2>You have been unsubscribed</h2>
+            <p>You will no longer receive marketing emails from YPropel.</p>
+          </body>
+        </html>
+      `);
+    } catch (err) {
+      console.error("Unsubscribe error:", err);
+      res.status(400).send("Invalid or expired unsubscribe link.");
+    }
+  })
+);
+
+
+// -------------------- ADMIN EMAIL BROADCAST --------------------
+app.post(
+  "/admin/email/broadcast",
+  authenticateToken,
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user?.isAdmin) {
+      return res.status(403).json({ error: "Admins only" });
+    }
+
+    const { subject, htmlBody } = req.body;
+
+    if (!subject || !htmlBody) {
+      return res.status(400).json({ error: "subject and htmlBody required" });
+    }
+
+    // Get all users who have not unsubscribed
+    const { rows: users } = await query(
+      `SELECT u.id, u.email, u.name
+       FROM users u
+       LEFT JOIN email_preferences p ON p.user_id = u.id
+       WHERE COALESCE(p.marketing_emails_enabled, TRUE) = TRUE
+         AND u.email IS NOT NULL`
+    );
+
+    let sent = 0;
+    let failed = 0;
+
+    for (const user of users) {
+      try {
+        const finalHtml = wrapWithUnsubscribe(user.id, htmlBody);
+
+        await sendEmail(user.email, subject, finalHtml);
+
+        // Log email
+        await query(
+          `INSERT INTO email_log (user_id, email, subject, template_name)
+           VALUES ($1, $2, $3, $4)`,
+          [user.id, user.email, subject, "admin_broadcast"]
+        );
+
+        sent++;
+      } catch (error) {
+        console.error(`Failed to send to ${user.email}`, error);
+        failed++;
+      }
+    }
+
+    res.json({
+      success: true,
+      sent,
+      failed,
+      total: users.length,
+    });
+  })
+);
+
+//---------emails notification rout end
 
 // ===================
 // Begin your full original route handlers here exactly as you sent them:

@@ -5536,17 +5536,31 @@ app.post(
 // YPropelAI Pathfinder Route (POST)
 // =========================
 
+// =========================
+// YPropelAI Pathfinder Route (POST)
+// =========================
+
 app.post(
   "/api/pathfinder",
-  authenticateToken,
   asyncHandler(async (req: Request, res: Response) => {
-    // try both userId and id depending on how your auth middleware sets it
-    const userId =
-      (req as any).user?.userId ??
-      (req as any).user?.id;
+    // 🔹 Optional auth: try to decode token if provided, but don't block if missing
+    const authHeader = req.headers["authorization"];
+    let userId: number | null = null;
 
-    if (!userId) {
-      return res.status(401).json({ error: "Unauthorized" });
+    if (authHeader && typeof authHeader === "string") {
+      const token = authHeader.split(" ")[1];
+      if (token) {
+        try {
+          const decoded = jwt.verify(token, JWT_SECRET) as {
+            userId: number;
+            email?: string;
+            is_admin?: boolean;
+          };
+          userId = decoded.userId;
+        } catch (err) {
+          console.warn("Pathfinder: invalid token, continuing without userId");
+        }
+      }
     }
 
     const input = req.body;
@@ -5555,17 +5569,23 @@ app.post(
       return res.status(400).json({ error: "Invalid input" });
     }
 
-    // 1) Save the raw input first (no recommendation yet)
-    const insertResult = await query(
-      `
-      INSERT INTO pathfinder_assessments (user_id, input, model_version)
-      VALUES ($1, $2, $3)
-      RETURNING id, created_at
-      `,
-      [userId, input, "pending"]
-    );
+    let assessmentId: number | null = null;
+    let createdAt: string | null = null;
 
-    const assessmentId = insertResult.rows[0].id;
+    // 1) If we have a valid userId, save raw input first
+    if (userId) {
+      const insertResult = await query(
+        `
+        INSERT INTO pathfinder_assessments (user_id, input, model_version)
+        VALUES ($1, $2, $3)
+        RETURNING id, created_at
+        `,
+        [userId, input, "pending"]
+      );
+
+      assessmentId = insertResult.rows[0].id;
+      createdAt = insertResult.rows[0].created_at;
+    }
 
     // 2) Call OpenAI for recommendation (Chat Completions API)
     const systemPrompt = `
@@ -5638,22 +5658,25 @@ Return JSON with this shape:
       throw err;
     }
 
-    // 3) Save AI output
-    await query(
-      `
-      UPDATE pathfinder_assessments
-      SET recommendation = $1, model_version = $2, updated_at = NOW()
-      WHERE id = $3
-      `,
-      [recommendation, "gpt-4.1-mini", assessmentId]
-    );
+    // 3) If we have a userId and DB record, update it with the recommendation
+    if (userId && assessmentId) {
+      await query(
+        `
+        UPDATE pathfinder_assessments
+        SET recommendation = $1, model_version = $2, updated_at = NOW()
+        WHERE id = $3
+        `,
+        [recommendation, "gpt-4.1-mini", assessmentId]
+      );
+    }
 
-    // 4) Return combined result
+    // 4) Return combined result (even if not stored in DB)
     return res.json({
       id: assessmentId,
       input,
       recommendation,
-      createdAt: insertResult.rows[0].created_at,
+      createdAt,
+      stored: Boolean(userId && assessmentId),
     });
   })
 );

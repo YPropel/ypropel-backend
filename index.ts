@@ -27,6 +27,8 @@ import { verifyUnsubscribeToken } from "./utils/unsubscribeTokens";
 import { wrapWithUnsubscribe } from "./src/emailTemplates";
 
 
+//--- Pathfinder
+import OpenAI from "openai";
 
 
 
@@ -59,7 +61,15 @@ const pool = new Pool({
   // other config options if needed
 });
 
+//------ Pathfinder
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY!,
+});
+//--------------
+
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+
+
 
 // --- CORS setup with correct origins whitelist ---
 const allowedOrigins = [
@@ -5515,7 +5525,200 @@ app.post(
         );
 
 
+//----- Pathfinder
 
+// =========================
+// YPropelAI Pathfinder Routes
+// =========================
+
+// POST /api/pathfinder - create a new assessment + AI recommendation
+// =========================
+// YPropelAI Pathfinder Route (POST)
+// =========================
+
+app.post(
+  "/api/pathfinder",
+  authenticateToken,
+  asyncHandler(async (req: Request, res: Response) => {
+    // try both userId and id depending on how your auth middleware sets it
+    const userId =
+      (req as any).user?.userId ??
+      (req as any).user?.id;
+
+    if (!userId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const input = req.body;
+
+    if (!input || typeof input !== "object") {
+      return res.status(400).json({ error: "Invalid input" });
+    }
+
+    // 1) Save the raw input first (no recommendation yet)
+    const insertResult = await query(
+      `
+      INSERT INTO pathfinder_assessments (user_id, input, model_version)
+      VALUES ($1, $2, $3)
+      RETURNING id, created_at
+      `,
+      [userId, input, "pending"]
+    );
+
+    const assessmentId = insertResult.rows[0].id;
+
+    // 2) Call OpenAI for recommendation (Chat Completions API)
+    const systemPrompt = `
+You are YPropelAI. You help students discover majors and career directions based on:
+- their location preferences
+- what they love doing
+- their school strengths and weaknesses
+- their personal skills and energy style
+- their life goals and constraints (budget, staying near family, etc.)
+
+You must:
+- Suggest 3–5 possible majors or fields.
+- Explain why each fits this specific student.
+- Provide a simple 6–12 month action plan.
+- Encourage them to discuss with parents, counselors, mentors.
+- Avoid any medical/mental health diagnoses.
+- Avoid stereotypes and bias.
+
+Respond ONLY in JSON, no markdown or extra text outside JSON.
+`;
+
+    const userPrompt = `
+Student input JSON:
+${JSON.stringify(input, null, 2)}
+
+Return JSON with this shape:
+
+{
+  "topMajors": [
+    {
+      "field": "string",
+      "confidence": "low" | "medium" | "high",
+      "whyFit": "string",
+      "exampleCareers": [
+        { "title": "string", "description": "string" }
+      ],
+      "studyPlan": {
+        "highSchool"?: ["..."],
+        "university"?: ["..."]
+      },
+      "onlineCourseTopics": ["topic1", "topic2"],
+      "actionChecklist6to12Months": ["step1", "step2"]
+    }
+  ],
+  "globalNotes": "string",
+  "safetyDisclaimer": "string"
+}
+`;
+
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4.1-mini",
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+      response_format: { type: "json_object" },
+    });
+
+    const rawJSON = completion.choices[0].message.content;
+
+    if (!rawJSON) {
+      throw new Error("OpenAI returned empty content");
+    }
+
+    let recommendation: any;
+    try {
+      recommendation = JSON.parse(rawJSON);
+    } catch (err) {
+      console.error("AI JSON parse error in /api/pathfinder:", rawJSON);
+      throw err;
+    }
+
+    // 3) Save AI output
+    await query(
+      `
+      UPDATE pathfinder_assessments
+      SET recommendation = $1, model_version = $2, updated_at = NOW()
+      WHERE id = $3
+      `,
+      [recommendation, "gpt-4.1-mini", assessmentId]
+    );
+
+    // 4) Return combined result
+    return res.json({
+      id: assessmentId,
+      input,
+      recommendation,
+      createdAt: insertResult.rows[0].created_at,
+    });
+  })
+);
+
+
+// GET /api/pathfinder/latest - latest result for this logged-in user
+app.get(
+  "/api/pathfinder/latest",
+  authenticateToken,
+  asyncHandler(async (req: Request, res: Response) => {
+    const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const result = await query(
+      `
+      SELECT *
+      FROM pathfinder_assessments
+      WHERE user_id = $1
+      ORDER BY created_at DESC
+      LIMIT 1
+      `,
+      [userId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "No pathfinder results found" });
+    }
+
+    return res.json(result.rows[0]);
+  })
+);
+
+// (Optional) GET /api/pathfinder/:id - fetch specific record for this user
+app.get(
+  "/api/pathfinder/:id",
+  authenticateToken,
+  asyncHandler(async (req: Request, res: Response) => {
+    const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const id = Number(req.params.id);
+    if (Number.isNaN(id)) {
+      return res.status(400).json({ error: "Invalid id" });
+    }
+
+    const result = await query(
+      `
+      SELECT *
+      FROM pathfinder_assessments
+      WHERE id = $1 AND user_id = $2
+      `,
+      [id, userId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "Not found" });
+    }
+
+    return res.json(result.rows[0]);
+  })
+);
 
 //---------------------------------------------------------------
 //---DB check block

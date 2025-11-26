@@ -25,6 +25,11 @@ import Stripe from "stripe";
 
 import { verifyUnsubscribeToken } from "./utils/unsubscribeTokens";
 import { wrapWithUnsubscribe } from "./src/emailTemplates";
+import { generateUnsubscribeToken } from "./utils/unsubscribeTokens";
+import { getJobRecommendationsForUser } from "./src/services/jobRecommendations";
+const FRONTEND_BASE_URL =
+  process.env.FRONTEND_BASE_URL || "https://ypropel.com";
+
 
 
 //--- Pathfinder
@@ -413,6 +418,109 @@ app.post(
   })
 );
 //--------------------------------------
+
+// --- Admin: test job digest for ONE user ---
+app.post(
+  "/admin/email/job-digest/test",
+  authenticateToken,
+  asyncHandler(async (req: any, res: any) => {
+    if (!req.user?.isAdmin) {
+      return res.status(403).json({ error: "Admins only" });
+    }
+
+    const { userId, limit } = req.body || {};
+    const uid = Number(userId);
+    if (!uid || !Number.isFinite(uid)) {
+      return res.status(400).json({ error: "userId is required and must be a number" });
+    }
+
+    // 1) Fetch user
+    const userRes = await query(
+      "SELECT id, name, email, unsubscribed FROM users WHERE id = $1 LIMIT 1",
+      [uid]
+    );
+
+    if (userRes.rows.length === 0) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const user = userRes.rows[0];
+    if (user.unsubscribed) {
+      return res.json({
+        success: true,
+        message: "User is unsubscribed. No email sent.",
+      });
+    }
+
+    // 2) Get recommendations
+    const recs = await getJobRecommendationsForUser(uid, limit || 10);
+
+    if (recs.length === 0) {
+      return res.json({
+        success: true,
+        message: "No recommendations for this user (no interest history or no matching jobs).",
+      });
+    }
+
+    // 3) Build email HTML
+    const unsubscribeToken = generateUnsubscribeToken(user.id);
+    const unsubscribeUrl = `${FRONTEND_BASE_URL}/unsubscribe?token=${unsubscribeToken}`;
+
+    const jobsHtml = recs
+      .map((job: any) => {
+        const jobUrl = `${FRONTEND_BASE_URL}/jobs/${job.id}`;
+        return `
+          <tr>
+            <td style="padding: 12px 0; border-bottom: 1px solid #eee;">
+              <div style="font-size:16px;font-weight:600;color:#0f172a;">${job.title}</div>
+              <div style="font-size:14px;color:#4b5563;">${job.company || ""}</div>
+              <div style="font-size:13px;color:#6b7280;">${job.location || ""}</div>
+              <div style="margin-top:8px;">
+                <a href="${jobUrl}"
+                   style="display:inline-block;padding:8px 14px;background:#10b981;color:#fff;text-decoration:none;border-radius:6px;font-size:13px;">
+                  View job
+                </a>
+              </div>
+            </td>
+          </tr>
+        `;
+      })
+      .join("");
+
+    const html = `
+      <div style="font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:24px;">
+        <h1 style="font-size:20px;color:#0f172a;margin-bottom:12px;">
+          New jobs based on what you viewed on YPropel
+        </h1>
+        <p style="font-size:14px;color:#4b5563;margin-bottom:16px;">
+          Hi ${user.name || ""}, here are some new opportunities similar to jobs you've looked at recently.
+        </p>
+
+        <table style="width:100%;border-collapse:collapse;">
+          ${jobsHtml}
+        </table>
+
+        <p style="font-size:12px;color:#9ca3af;margin-top:24px;">
+          You’re receiving this because you have a YPropel account and interacted with job listings.
+          If you’d like to stop receiving these emails, you can
+          <a href="${unsubscribeUrl}" style="color:#2563eb;">unsubscribe here</a>.
+        </p>
+      </div>
+    `;
+
+    const subject = "New jobs for you on YPropel";
+
+    await sendEmail(user.email, subject, html);
+
+    res.json({
+      success: true,
+      message: `Sent job digest to ${user.email}`,
+      sentTo: user.email,
+      recommendationsCount: recs.length,
+    });
+  })
+);
+
 
 //===================== End of emails notification and broadcast =============
 
@@ -5528,7 +5636,7 @@ app.post(
 //----- Pathfinder
 
 // =========================
-// YPropelAI Pathfinder Routes
+// YPropel AI tool Pathfinder Routes
 // =========================
 
 // POST /api/pathfinder - create a new assessment + AI recommendation
@@ -5682,7 +5790,7 @@ Return JSON with this shape:
 );
 
 
-// GET /api/pathfinder/latest - latest result for this logged-in user
+// -- GET /api/pathfinder/latest - latest result for this logged-in user
 app.get(
   "/api/pathfinder/latest",
   authenticateToken,

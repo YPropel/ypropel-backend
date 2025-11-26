@@ -1,18 +1,24 @@
 // src/services/jobRecommendations.ts
+
 import { query } from "../../db";
 
+/**
+ * Returns jobs matching the user's past interests.
+ * - Matches category + job_type
+ * - Excludes jobs the user already interacted with
+ */
 export async function getJobRecommendationsForUser(
   userId: number,
   limit: number = 10
 ) {
-  // 1) Get the categories & job_types this user has shown interest in
+  // 1) What categories + job types did the user show interest in?
   const interestsRes = await query(
     `
     SELECT DISTINCT category, job_type
     FROM job_interest_events
     WHERE user_id = $1
       AND category IS NOT NULL
-    ORDER BY created_at DESC
+      AND job_type IS NOT NULL
     LIMIT 50;
   `,
     [userId]
@@ -25,12 +31,17 @@ export async function getJobRecommendationsForUser(
   const categories = interestsRes.rows
     .map((r) => r.category)
     .filter(Boolean) as string[];
+
   const jobTypes = interestsRes.rows
     .map((r) => r.job_type)
     .filter(Boolean) as string[];
 
-  // 2) Recommend recent jobs matching those categories / job types
-  // and that the user hasn't already viewed/applied (no interest event yet)
+  if (categories.length === 0 || jobTypes.length === 0) {
+    return [];
+  }
+
+  // 2) Recommend jobs in those same categories & job types,
+  //    excluding jobs they already interacted with
   const recRes = await query(
     `
     SELECT j.*

@@ -115,7 +115,7 @@ app.use((req, res, next) => {
 async function sendJobDigestToAllUsers(limit: number = 10) {
   const usersRes = await query(
     `
-   SELECT id, email, job_alert_unsubscribed
+   SELECT id, email, email_unsubscribed
   FROM users
   WHERE id = 13
     `

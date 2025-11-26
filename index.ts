@@ -119,11 +119,11 @@ async function sendJobDigestToAllUsers(jobLimitPerUser: number = 10) {
 
   const usersRes = await query(
     `
-      SELECT u.id, u.email, u.name, u.job_alert_unsubscribed, u.job_alert_last_sent_at
+      SELECT u.id, u.email, u.name, u.email_unsubscribed, u.job_alert_last_sent_at
       FROM users u
       WHERE u.email IS NOT NULL
         AND u.email <> ''
-        AND (u.job_alert_unsubscribed IS NOT TRUE)
+        AND (u.email_unsubscribed IS NOT TRUE)
         AND (
           u.job_alert_last_sent_at IS NULL
           OR u.job_alert_last_sent_at < NOW() - INTERVAL '1 day'

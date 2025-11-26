@@ -110,19 +110,38 @@ app.use((req, res, next) => {
   
 });
 
+//------------------ Job Digest Email notifications corn ---------------
+//------- send job digest email triggered automatically - Cron job on render
+//---- It sends it in batches to members -------
+async function sendJobDigestToAllUsers(jobLimitPerUser: number = 10) {
+  // 🔢 How many users to email per cron run
+  const USER_BATCH_LIMIT = 500; // or 100/200/etc.
 
-//-------send digest triggered automatically - Corn job on render
-async function sendJobDigestToAllUsers(limit: number = 10) {
   const usersRes = await query(
     `
-   SELECT id, email, email_unsubscribed
-  FROM users
-  WHERE id = 13
-    `
+      SELECT u.id, u.email, u.name, u.job_alert_unsubscribed, u.job_alert_last_sent_at
+      FROM users u
+      WHERE u.email IS NOT NULL
+        AND u.email <> ''
+        AND (u.job_alert_unsubscribed IS NOT TRUE)
+        AND (
+          u.job_alert_last_sent_at IS NULL
+          OR u.job_alert_last_sent_at < NOW() - INTERVAL '1 day'
+        )
+        AND EXISTS (
+          SELECT 1
+          FROM job_alerts ja
+          WHERE ja.user_id = u.id
+        )
+      ORDER BY u.job_alert_last_sent_at NULLS FIRST, u.id
+      LIMIT $1
+    `,
+    [USER_BATCH_LIMIT]
   );
 
   const users = usersRes.rows;
   if (!users.length) {
+    console.log("Job digest: no eligible users today.");
     return {
       totalUsers: 0,
       emailsSent: 0,
@@ -137,8 +156,9 @@ async function sendJobDigestToAllUsers(limit: number = 10) {
 
   for (const user of users) {
     try {
-      const recs = await getJobRecommendationsForUser(user.id, limit);
+      const recs = await getJobRecommendationsForUser(user.id, jobLimitPerUser);
 
+      // ⛔ No recommendations: skip, but DON'T update last_sent_at
       if (!recs.length) {
         skippedNoRecommendations++;
         continue;
@@ -189,10 +209,18 @@ async function sendJobDigestToAllUsers(limit: number = 10) {
         </div>
       `;
 
+      console.log("Job digest: sending email to", user.id, user.email);
+
       await sendEmail(
         user.email,
         "New jobs based on your interest on YPropel",
         html
+      );
+
+      // ✅ Mark that this user got a digest now (only after successful send)
+      await query(
+        `UPDATE users SET job_alert_last_sent_at = NOW() WHERE id = $1`,
+        [user.id]
       );
 
       emailsSent++;
@@ -210,8 +238,9 @@ async function sendJobDigestToAllUsers(limit: number = 10) {
   };
 }
 
+
 //----
-// For Render / cron job: trigger job digests for all users
+//--- Route  For Render / corn job: trigger job digests for all users
 app.post(
   "/cron/email/job-digest",
   asyncHandler(async (req: any, res: any) => {

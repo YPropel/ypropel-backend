@@ -7,6 +7,7 @@ declare global {
         userId: number;
         email?: string;
         isAdmin?: boolean;
+        accountType?: string; 
       };
     }
   }

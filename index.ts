@@ -293,7 +293,7 @@ const storage = new CloudinaryStorage({
     };
   },
 });
-//----- cloud storage for ocmpanies logos
+//----- cloud storage for companies logos
 const companyLogoStorage = new CloudinaryStorage({
   cloudinary,
   params: async (req, file) => ({
@@ -310,13 +310,17 @@ const upload = multer({ storage });
 const multerMemoryStorage = multer.memoryStorage();
 const uploadMemory = multer({ storage: multerMemoryStorage });
 
-declare global {
+
+// ==== This part deleted as part of our work to allow companies to create
+//---- business accoutns as we realized it's already declared in cutom.d.ts file
+/*declare global {   
   namespace Express {
     interface Request {
       user?: { userId: number; email?: string; isAdmin?: boolean };
     }
   }
-}
+}*/ 
+//==================================================================
 
 const port = 4000;
 const JWT_SECRET = process.env.JWT_SECRET || "your_jwt_secret_key";
@@ -359,17 +363,24 @@ function authenticateToken(req: Request, res: Response, next: NextFunction): voi
       return next(new AuthError("Invalid or expired token", 403));
     }
 
-    const payload = decoded as { userId: number; email?: string; is_admin?: boolean };
+    const payload = decoded as {
+      userId: number;
+      email?: string;
+      is_admin?: boolean;
+      account_type?: string;   // 👈 NEW
+    };
 
     req.user = {
       userId: payload.userId,
       email: payload.email,
       isAdmin: payload.is_admin || false,
+      accountType: payload.account_type || "member", // 👈 NEW
     };
 
     next();
   });
 }
+
 //----------------------------------
 // Import sendEmail utility here
 import { sendEmail } from "./utils/sendEmail";
@@ -794,10 +805,10 @@ app.post(
 
 //===================== End of emails notification and broadcast =============
 
-// ===================
+
 // Begin your full original route handlers here exactly as you sent them:
 
-// --- Google OAuth login
+// ------ Google OAuth login
 app.post(
   "/auth/google-login",
   asyncHandler(async (req: Request, res: Response) => {
@@ -828,21 +839,29 @@ app.post(
         const dummyPassword = "google_oauth_dummy_password_" + Date.now();
         const dummyPasswordHash = await bcrypt.hash(dummyPassword, 10);
 
-        // Insert new user with dummy password hash to satisfy NOT NULL constraint
+        // 👇 NEW: set account_type explicitly for new Google users
         const insertRes = await query(
-          `INSERT INTO users (name, email, photo_url, password_hash, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, NOW(), NOW())
+          `INSERT INTO users (name, email, photo_url, password_hash, account_type, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
            RETURNING *`,
-          [name, email, picture || null, dummyPasswordHash]
+          [name, email, picture || null, dummyPasswordHash, "member"] // Google signups = member by default
         );
         user = insertRes.rows[0];
       } else {
         user = existingUserRes.rows[0];
       }
 
+      // 👇 If old users have NULL account_type, treat them as "member"
+      const accountType = user.account_type || "member";
+
       // Sign JWT token
       const token = jwt.sign(
-        { userId: user.id, email: user.email, is_admin: user.is_admin || false },
+        {
+          userId: user.id,
+          email: user.email,
+          is_admin: user.is_admin,
+          account_type: accountType,
+        },
         JWT_SECRET,
         { expiresIn: "7d" }
       );
@@ -854,6 +873,7 @@ app.post(
     }
   })
 );
+
 
 // --- Forgot password
 app.post(
@@ -920,6 +940,7 @@ app.post(
   })
 );
 
+// --- Signup for users and companies (business)
 // --- Signup
 const defaultProfilePhotos = [
   "https://res.cloudinary.com/denggbgma/image/upload/v<version>/ypropel-users/default-profile1.png",
@@ -942,10 +963,15 @@ async function signupHandler(req: Request, res: Response) {
     volunteering_work,
     projects_completed,
     photo_url,
+    accountType = "member", // 👈 NEW: "member" | "employer"
   } = req.body;
 
   if (!name || !email || !password) {
     return res.status(400).json({ error: "Name, email, and password are required" });
+  }
+
+  if (!["member", "employer"].includes(accountType)) {
+    return res.status(400).json({ error: "Invalid accountType" });
   }
 
   let photoUrlToUse = photo_url;
@@ -964,9 +990,13 @@ async function signupHandler(req: Request, res: Response) {
 
     const result = await query(
       `INSERT INTO users 
-      (name, email, password_hash, title, university, major, experience_level, skills, company, courses_completed, country, birthdate, volunteering_work, projects_completed, photo_url, created_at, updated_at)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15, NOW(), NOW())
-      RETURNING id, name, email, title, university, major, experience_level, skills, company, courses_completed, country, birthdate, volunteering_work, projects_completed, photo_url`,
+        (name, email, password_hash, title, university, major, experience_level, skills, company,
+         courses_completed, country, birthdate, volunteering_work, projects_completed, photo_url,
+         account_type, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16, NOW(), NOW())
+       RETURNING id, name, email, title, university, major, experience_level, skills, company,
+                 courses_completed, country, birthdate, volunteering_work, projects_completed,
+                 photo_url, account_type, is_admin`,
       [
         name,
         email,
@@ -983,14 +1013,22 @@ async function signupHandler(req: Request, res: Response) {
         volunteering_work || null,
         projects_completed || null,
         photoUrlToUse,
+        accountType, // 👈 NEW
       ]
     );
 
     const user = result.rows[0];
 
-    const token = jwt.sign({ userId: user.id, email: user.email }, JWT_SECRET, {
-      expiresIn: "7d",
-    });
+    const token = jwt.sign(
+      {
+        userId: user.id,
+        email: user.email,
+        is_admin: user.is_admin,          // will be false for normal signups
+        account_type: user.account_type,  // "member" or "employer"
+      },
+      JWT_SECRET,
+      { expiresIn: "7d" }
+    );
 
     res.status(201).json({ user, token });
   } catch (error) {
@@ -999,6 +1037,8 @@ async function signupHandler(req: Request, res: Response) {
   }
 }
 
+
+// --- Signin
 // --- Signin
 async function signinHandler(req: Request, res: Response) {
   const { email, password } = req.body;
@@ -1019,23 +1059,27 @@ async function signinHandler(req: Request, res: Response) {
       return res.status(401).json({ error: "Invalid email or password" });
     }
 
+    const accountType = user.account_type || "member"; // 👈 safe default
+
     const token = jwt.sign(
       {
         userId: user.id,
         email: user.email,
         is_admin: user.is_admin,
+        account_type: accountType,
       },
       JWT_SECRET,
       { expiresIn: "7d" }
     );
 
     const { password_hash, ...userData } = user;
-    res.json({ user: userData, token });
+    res.json({ user: { ...userData, account_type: accountType }, token });
   } catch (error) {
     console.error("Error signing in user:", error);
     res.status(500).json({ error: (error as Error).message || "Unknown error" });
   }
 }
+
 
 // --- Register signup and signin routes
 app.post("/auth/signup", asyncHandler(signupHandler));
@@ -1549,8 +1593,7 @@ app.post("/pending_majors", authenticateToken, asyncHandler(async (req, res) => 
   res.status(201).json(result.rows[0]);
 }));
 
-//-----Routes to get experience level for drop down in edite profile
-
+//-----Routes to get experience level for drop down in edit profile
 
 // GET all standard experience levels
 app.get(
@@ -5081,20 +5124,30 @@ app.post(
 
 //-------------------Companies Profiles and adding jobs---------------------------
 //---------------------------------------------------------------------------------
-
 // --- Create Company Profile (must be done before posting a job)
 app.post(
   "/companies",
-  uploadCompanyLogo.single("logo"), // Attach the logo upload middleware
+  authenticateToken,                       // ✅ must be logged in
+  uploadCompanyLogo.single("logo"),        // Attach the logo upload middleware
   asyncHandler(async (req: Request, res: Response) => {
-    const { name, description, location, industry, userId } = req.body;
+    const { name, description, location, industry } = req.body;
+    const userId = req.user?.userId;
+    const isAdmin = req.user?.isAdmin;
+    const accountType = req.user?.accountType;
+
+    if (!userId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
 
     if (!name || !description || !location || !industry) {
       return res.status(400).json({ error: "Missing required fields" });
     }
 
-    if (!userId) {
-      return res.status(400).json({ error: "User ID is required" });
+    // ✅ Only employer accounts (and admins) can create a company profile
+    if (!isAdmin && accountType !== "employer") {
+      return res
+        .status(403)
+        .json({ error: "Only employer accounts can create company profiles." });
     }
 
     // Get logo URL from uploaded file
@@ -5128,6 +5181,7 @@ app.post(
 );
 
 
+
 // GET route to fetch company details by companyId
 app.get(
   "/companies/:companyId",
@@ -5153,32 +5207,46 @@ app.get(
     }
   })
 ); 
-
 // --- Delete Company Route
 app.delete(
   "/companies/delete",
+  authenticateToken,   // ✅ must be logged in
   asyncHandler(async (req: Request, res: Response) => {
-    const { companyId, userId } = req.body; // Receive companyId and userId from the request body
+    const { companyId } = req.body; // Only need companyId now
+    const userId = req.user?.userId;
+    const isAdmin = req.user?.isAdmin;
 
-    if (!companyId || !userId) {
-      return res.status(400).json({ error: "Company ID and User ID are required" });
+    if (!companyId) {
+      return res.status(400).json({ error: "Company ID is required" });
+    }
+
+    if (!userId) {
+      return res.status(401).json({ error: "Unauthorized" });
     }
 
     try {
-      // Ensure the company belongs to the logged-in user
+      // Get the company and its owner
       const companyResult = await query(
-        "SELECT id FROM companies WHERE id = $1 AND user_id = $2", 
-        [companyId, userId]
+        "SELECT id, user_id FROM companies WHERE id = $1",
+        [companyId]
       );
 
       if (companyResult.rows.length === 0) {
-        return res.status(400).json({ error: "You do not have permission to delete this company." });
+        return res.status(404).json({ error: "Company not found." });
+      }
+
+      const company = companyResult.rows[0];
+
+      // ✅ Only the owner OR an admin can delete the company
+      if (!isAdmin && company.user_id !== userId) {
+        return res
+          .status(403)
+          .json({ error: "You do not have permission to delete this company." });
       }
 
       // Proceed to delete the company from the database
       await query("DELETE FROM companies WHERE id = $1", [companyId]);
 
-      // Return a success message
       res.status(200).json({ success: true, message: "Company successfully deleted." });
     } catch (error) {
       console.error("Error deleting company:", error);
@@ -5187,139 +5255,61 @@ app.delete(
   })
 );
 
-// --- Post a Job by a company user (linked to a company)
-// --- Post a Job by a company user (linked to a company)
-/*app.post(
-  "/companies/post-job",
-  authenticateToken,
-  asyncHandler(async (req: Request, res: Response) => {
-    if (!req.user) {
-      return res.status(401).json({ error: "User not authenticated" });
-    }
-
-    const {
-      title,
-      description,
-      category,
-      location,
-      requirements,
-      applyUrl,
-      salary,
-      jobType,
-      country,
-      state,
-      city,
-    } = req.body;
-
-    const posted_by = req.user.userId;
-
-    if (!title || !description || !category || !jobType || !applyUrl || !location || !country || !state || !city) {
-      return res.status(400).json({ error: "All required fields must be filled." });
-    }
-
-    const companyResult = await query(
-      "SELECT id, name FROM companies WHERE user_id = $1",
-      [posted_by]
-    );
-
-    if (companyResult.rows.length === 0) {
-      return res.status(400).json({ error: "User is not associated with a company." });
-    }
-
-    const { id: company_id, name: companyName } = companyResult.rows[0];
-
-    const ALLOWED_LOCATIONS = ["Remote", "Onsite", "Hybrid"];
-    if (!ALLOWED_LOCATIONS.includes(location)) {
-      return res.status(400).json({ error: "Invalid location value. Allowed: Remote, Onsite, Hybrid" });
-    }
-
-    // Check if the company already has an active job
-    const existingJob = await query(
-      "SELECT id FROM jobs WHERE company_id = $1 AND is_active = true AND expires_at > NOW()",
-      [company_id]
-    );
-
-    if (existingJob.rows.length > 0) {
-      return res.status(400).json({ error: "You already have an active free job posting. Please wait until it expires or switch to paid posting." });
-    }
-
-    // Set expiration to 3 days from now
-    const expiresAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
-
-    const result = await query(
-      `INSERT INTO jobs
-        (title, description, category, company_id, company, location, requirements, apply_url, salary, job_type, country, state, city, expires_at, is_active)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, true)
-      RETURNING *`,
-      [
-        title,
-        description,
-        category,
-        company_id,
-        companyName,
-        location,
-        requirements,
-        applyUrl,
-        salary,
-        jobType,
-        country,
-        state,
-        city,
-        expiresAt,
-      ]
-    );
-
-    res.status(201).json({
-      success: true,
-      job: result.rows[0],
-      companyId: company_id,
-    });
-  })
-);*/
 
 // Get all jobs posted by the company and display it on the page for user (owner)
 app.get(
-  "/companies/:companyId/jobs",  // Modify the route to use :companyId as a parameter
+  "/companies/:companyId/jobs",
   authenticateToken,
   asyncHandler(async (req: Request, res: Response) => {
     if (!req.user) {
       return res.status(401).json({ error: "User not authenticated" });
     }
 
-    const { companyId } = req.params; // Get companyId from route parameters
-
+    const { companyId } = req.params;
     if (!companyId) {
       return res.status(400).json({ error: "Company ID is required" });
     }
 
-    // Parse companyId as an integer
-    const parsedCompanyId = parseInt(companyId, 10);  // Now using req.params.companyId
-
+    const parsedCompanyId = parseInt(companyId, 10);
     if (isNaN(parsedCompanyId)) {
       return res.status(400).json({ error: "Invalid Company ID format" });
     }
 
-    // Log to check the received companyId
-    console.log("Received companyId:", parsedCompanyId);
+    const userId = req.user.userId;
+    const isAdmin = req.user.isAdmin;
 
-     // ✅ Deactivate expired jobs (free or paid) before returning list
-        await query(`
-          UPDATE jobs
-          SET is_active = false
-          WHERE expires_at IS NOT NULL AND expires_at < NOW() AND is_active = true
+    // ✅ Ensure this company belongs to the logged-in user (unless admin)
+    const companyOwnerRes = await query(
+      "SELECT user_id FROM companies WHERE id = $1",
+      [parsedCompanyId]
+    );
 
-        `);
-      console.log("Deactivating expired jobs before returning company jobs...");
+    if (companyOwnerRes.rows.length === 0) {
+      return res.status(404).json({ error: "Company not found" });
+    }
 
-    // Fetch jobs for the given companyId
+    const ownerId = companyOwnerRes.rows[0].user_id;
+    if (!isAdmin && ownerId !== userId) {
+      return res.status(403).json({ error: "You are not allowed to view these jobs." });
+    }
+
+    // ✅ Deactivate expired jobs before returning list
+    await query(`
+      UPDATE jobs
+      SET is_active = false
+      WHERE expires_at IS NOT NULL AND expires_at < NOW() AND is_active = true
+    `);
+    console.log("Deactivating expired jobs before returning company jobs...");
+
     const result = await query(
       "SELECT * FROM jobs WHERE company_id = $1 ORDER BY posted_at DESC",
-      [parsedCompanyId] // Use parsed integer value
+      [parsedCompanyId]
     );
 
     res.json(result.rows);
   })
-); 
+);
+
 app.post(
   "/companies/post-job",
   authenticateToken,
@@ -5328,6 +5318,19 @@ app.post(
       return res.status(401).json({ error: "User not authenticated" });
     }
 
+    const { accountType, isAdmin, userId } = {
+      accountType: req.user.accountType,
+      isAdmin: req.user.isAdmin,
+      userId: req.user.userId,
+    };
+
+    // ✅ Only employer accounts (and admins) can post jobs
+    if (!isAdmin && accountType !== "employer") {
+      return res
+        .status(403)
+        .json({ error: "Only employer accounts can post jobs." });
+    }
+
     const {
       title,
       description,
@@ -5340,10 +5343,10 @@ app.post(
       country,
       state,
       city,
-      planType, // 'free', 'pay_per_post', or 'subscription'
+      planType,
     } = req.body;
 
-    const posted_by = req.user.userId;
+    const posted_by = userId;
 
     if (!title || !description || !category || !jobType || !applyUrl || !location || !country || !state || !city || !planType) {
       return res.status(400).json({ error: "All required fields must be filled." });
@@ -5505,6 +5508,19 @@ app.post(
   "/payment/create-checkout-session",
   authenticateToken,
   asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const { accountType, isAdmin } = req.user;
+
+    // ✅ Only employer accounts (and admins) can buy job posting plans
+    if (!isAdmin && accountType !== "employer") {
+      return res
+        .status(403)
+        .json({ error: "Only employer accounts can purchase job plans." });
+    }
+
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
       mode: "payment",
@@ -5528,17 +5544,33 @@ app.post(
     res.json({ url: session.url });
   })
 );
+
 //-------------allow companies to subscribe to premium package-
 app.post(
   "/payment/create-subscription-checkout-session",
   authenticateToken,
   asyncHandler(async (req: Request, res: Response) => {
-    const userId = (req.user as { userId: number }).userId;
-
-    const userResult = await query("SELECT email, company_subscription_id FROM users WHERE id = $1", [userId]);
-    if (userResult.rows.length === 0) {
-      return res.status(404).json({ error: "User not found" });
+    if (!req.user) {
+      return res.status(401).json({ error: "Unauthorized" });
     }
+
+    const { accountType, isAdmin, userId } = {
+      accountType: req.user.accountType,
+      isAdmin: req.user.isAdmin,
+      userId: req.user.userId,
+    };
+
+    // ✅ Only employer accounts (and admins) can subscribe
+    if (!isAdmin && accountType !== "employer") {
+      return res
+        .status(403)
+        .json({ error: "Only employer accounts can subscribe to company plans." });
+    }
+
+    const userResult = await query(
+      "SELECT email, company_subscription_id, stripe_customer_id FROM users WHERE id = $1",
+      [userId]
+    );
 
     const customerEmail = userResult.rows[0].email;
     let stripeCustomerId = userResult.rows[0].stripe_customer_id;
@@ -5576,13 +5608,18 @@ app.post(
 
 app.post(
   "/users/set-company-premium",
-  authenticateToken, // checks JWT, populates req.user
+  authenticateToken,
   asyncHandler(async (req, res) => {
     const userId = req.user?.userId;
+    const { accountType, isAdmin } = req.user || {};
+
     if (!userId) {
       return res.status(401).json({ error: "Unauthorized" });
     }
 
+    if (!isAdmin && accountType !== "employer") {
+      return res.status(403).json({ error: "Only employer accounts can be premium companies." });
+    }
     const result = await query(
       "UPDATE users SET is_company_premium = TRUE WHERE id = $1 RETURNING id, is_company_premium",
       [userId]
@@ -5602,7 +5639,13 @@ app.post(
   authenticateToken,
   asyncHandler(async (req: Request, res: Response) => {
     const userId = req.user?.userId;
+    const { accountType, isAdmin } = req.user || {};
+
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
+
+    if (!isAdmin && accountType !== "employer") {
+      return res.status(403).json({ error: "Only employer accounts can cancel company subscriptions." });
+    }
 
     // Find the Stripe subscription ID for this user’s company subscription
     const userResult = await query(

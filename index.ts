@@ -436,7 +436,7 @@ app.post(
 
     // 1) Fetch user
     const userRes = await query(
-      "SELECT id, name, email, unsubscribed FROM users WHERE id = $1 LIMIT 1",
+      "SELECT id, name, email, email_unsubscribed FROM users WHERE id = $1 LIMIT 1",
       [uid]
     );
 
@@ -445,7 +445,7 @@ app.post(
     }
 
     const user = userRes.rows[0];
-    if (user.unsubscribed) {
+    if (user.email_unsubscribed) {
       return res.json({
         success: true,
         message: "User is unsubscribed. No email sent.",

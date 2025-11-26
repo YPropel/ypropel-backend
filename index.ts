@@ -109,7 +109,7 @@ app.use((req, res, next) => {
   }
   
 });
-
+//=====================================================================
 //------------------ Job Digest Email notifications cron ---------------
 //------- send job digest email triggered automatically - Cron job on render
 //---- It sends it in batches to members -------
@@ -119,11 +119,13 @@ async function sendJobDigestToAllUsers(jobLimitPerUser: number = 10) {
 
   const usersRes = await query(
     `
-      SELECT u.id, u.email, u.name, u.email_unsubscribed, u.job_alert_last_sent_at
+      SELECT u.id, u.email, u.name, u.job_alert_last_sent_at
       FROM users u
+      LEFT JOIN email_preferences p ON p.user_id = u.id
       WHERE u.email IS NOT NULL
         AND u.email <> ''
-        AND (u.email_unsubscribed IS NOT TRUE)
+        -- ✅ respect unsubscribe: default TRUE, unless explicitly turned off
+        AND COALESCE(p.marketing_emails_enabled, TRUE) = TRUE
         AND (
           u.job_alert_last_sent_at IS NULL
           OR u.job_alert_last_sent_at < NOW() - INTERVAL '1 day'
@@ -239,6 +241,7 @@ async function sendJobDigestToAllUsers(jobLimitPerUser: number = 10) {
 }
 
 
+
 //----
 //--- Route  For Render / cron job: trigger job digests for all users
 app.post(
@@ -265,7 +268,7 @@ app.post(
   })
 );
 //------------------- End of cron trigger route for job digest--------------------------------------
-
+//---------------------------------------------------------
 
 app.use("/admin", adminRoutes); //--adminbackendroute
 

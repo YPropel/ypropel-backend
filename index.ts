@@ -419,7 +419,7 @@ app.post(
 );
 //--------------------------------------
 
-// --- Admin: test job digest for ONE user ---
+// --- Admin: Test Only Route to send test job digest for ONE user Rania email ---
 app.post(
   "/admin/email/job-digest/test",
   authenticateToken,
@@ -520,7 +520,242 @@ app.post(
     });
   })
 );
+//---------------------
+// ============================
+// Send Job Digest to *ALL* Users based on their their jobs views
+// ===========Send Digest triggered by Admin only =================
+app.post(
+  "/email/job-digest/send-all",
+  asyncHandler(async (req: any, res: any) => {
 
+    // Admin-only security check
+    if (!req.user?.isAdmin) {
+      return res.status(403).json({ error: "Admins only" });
+    }
+
+    // 1) Get all users who are NOT unsubscribed
+    const usersRes = await query(
+      `
+      SELECT id, email, name 
+      FROM users
+      WHERE email_unsubscribed = FALSE
+      `
+    );
+
+    const users = usersRes.rows;
+
+    if (users.length === 0) {
+      return res.json({ success: true, message: "No eligible users" });
+    }
+
+    let sentCount = 0;
+    let failCount = 0;
+
+    for (const user of users) {
+      try {
+        const recs = await getJobRecommendationsForUser(user.id, 10);
+
+        if (recs.length === 0) {
+          continue; // no recommendations, skip but not an error
+        }
+
+        // Build email HTML
+        const FRONTEND_BASE_URL =
+          process.env.FRONTEND_BASE_URL || "https://ypropel.com";
+
+        const unsubscribeToken = generateUnsubscribeToken(user.id);
+        const unsubscribeUrl = `${FRONTEND_BASE_URL}/unsubscribe?token=${unsubscribeToken}`;
+
+        const jobsHtml = recs
+          .map((job: any) => {
+            const jobUrl = `${FRONTEND_BASE_URL}/jobs/${job.id}`;
+            return `
+              <tr>
+                <td style="padding: 12px 0; border-bottom: 1px solid #eee;">
+                  <div style="font-size:16px;font-weight:600;color:#0f172a;">${job.title}</div>
+                  <div style="font-size:14px;color:#4b5563;">${job.company || ""}</div>
+                  <div style="font-size:13px;color:#6b7280;">${job.location || ""}</div>
+                  <div style="margin-top:8px;">
+                    <a href="${jobUrl}"
+                       style="display:inline-block;padding:8px 14px;background:#10b981;color:#fff;text-decoration:none;border-radius:6px;font-size:13px;">
+                      View job
+                    </a>
+                  </div>
+                </td>
+              </tr>
+            `;
+          })
+          .join("");
+
+        const html = `
+          <div style="font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:24px;">
+            <h1 style="font-size:20px;color:#0f172a;margin-bottom:12px;">
+              New jobs based on what you viewed on YPropel
+            </h1>
+            <p style="font-size:14px;color:#4b5563;margin-bottom:16px;">
+              Hi ${user.name || ""}, here are some new opportunities similar to jobs you've looked at recently.
+            </p>
+
+            <table style="width:100%;border-collapse:collapse;">
+              ${jobsHtml}
+            </table>
+
+            <p style="font-size:12px;color:#9ca3af;margin-top:24px;">
+              You are receiving this because you interacted with jobs on YPropel.
+              To unsubscribe, click
+              <a href="${unsubscribeUrl}" style="color:#2563eb;">here</a>.
+            </p>
+          </div>
+        `;
+
+        await sendEmail(
+          user.email,
+          "New jobs based on your interest on YPropel",
+          html
+        );
+
+        sentCount++;
+      } catch (e) {
+        console.error("Failed to send digest to user:", user.id, e);
+        failCount++;
+      }
+    }
+
+    res.json({
+      success: true,
+      totalUsers: users.length,
+      emailsSent: sentCount,
+      failed: failCount,
+    });
+  })
+);
+
+//-------send digest triggered automatically - Corn job on render
+async function sendJobDigestToAllUsers(limit: number = 10) {
+  const usersRes = await query(
+    `
+    SELECT id, email, name, email_unsubscribed
+    FROM users
+    WHERE email_unsubscribed = FALSE
+    `
+  );
+
+  const users = usersRes.rows;
+  if (!users.length) {
+    return {
+      totalUsers: 0,
+      emailsSent: 0,
+      failed: 0,
+      skippedNoRecommendations: 0,
+    };
+  }
+
+  let emailsSent = 0;
+  let failed = 0;
+  let skippedNoRecommendations = 0;
+
+  for (const user of users) {
+    try {
+      const recs = await getJobRecommendationsForUser(user.id, limit);
+
+      if (!recs.length) {
+        skippedNoRecommendations++;
+        continue;
+      }
+
+      const unsubscribeToken = generateUnsubscribeToken(user.id);
+      const unsubscribeUrl = `${FRONTEND_BASE_URL}/unsubscribe?token=${unsubscribeToken}`;
+
+      const jobsHtml = recs
+        .map((job: any) => {
+          const jobUrl = `${FRONTEND_BASE_URL}/jobs/${job.id}`;
+          return `
+            <tr>
+              <td style="padding: 12px 0; border-bottom: 1px solid #eee;">
+                <div style="font-size:16px;font-weight:600;color:#0f172a;">${job.title}</div>
+                <div style="font-size:14px;color:#4b5563;">${job.company || ""}</div>
+                <div style="font-size:13px;color:#6b7280;">${job.location || ""}</div>
+                <div style="margin-top:8px;">
+                  <a href="${jobUrl}"
+                     style="display:inline-block;padding:8px 14px;background:#10b981;color:#fff;text-decoration:none;border-radius:6px;font-size:13px;">
+                    View job
+                  </a>
+                </div>
+              </td>
+            </tr>
+          `;
+        })
+        .join("");
+
+      const html = `
+        <div style="font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:24px;">
+          <h1 style="font-size:20px;color:#0f172a;margin-bottom:12px;">
+            New jobs based on what you viewed on YPropel
+          </h1>
+          <p style="font-size:14px;color:#4b5563;margin-bottom:16px;">
+            Hi ${user.name || ""}, here are some new opportunities similar to jobs you've looked at recently.
+          </p>
+
+          <table style="width:100%;border-collapse:collapse;">
+            ${jobsHtml}
+          </table>
+
+          <p style="font-size:12px;color:#9ca3af;margin-top:24px;">
+            You are receiving this because you interacted with jobs on YPropel.
+            To unsubscribe from these emails, click
+            <a href="${unsubscribeUrl}" style="color:#2563eb;">here</a>.
+          </p>
+        </div>
+      `;
+
+      await sendEmail(
+        user.email,
+        "New jobs based on your interest on YPropel",
+        html
+      );
+
+      emailsSent++;
+    } catch (e) {
+      console.error("Failed to send digest to user:", user.id, e);
+      failed++;
+    }
+  }
+
+  return {
+    totalUsers: users.length,
+    emailsSent,
+    failed,
+    skippedNoRecommendations,
+  };
+}
+
+//----
+// For Render / cron job: trigger job digests for all users
+app.post(
+  "/cron/email/job-digest",
+  asyncHandler(async (req: any, res: any) => {
+    const headerSecret = req.headers["x-cron-secret"];
+
+    if (!process.env.CRON_SECRET) {
+      console.error("CRON_SECRET is not set in environment");
+      return res.status(500).json({ error: "CRON_SECRET not configured" });
+    }
+
+    if (headerSecret !== process.env.CRON_SECRET) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+
+    const { limit } = req.body || {};
+    const summary = await sendJobDigestToAllUsers(limit || 10);
+
+    return res.json({
+      success: true,
+      ...summary,
+    });
+  })
+);
+
+//------------------------------------------------------
 
 //===================== End of emails notification and broadcast =============
 

@@ -76,6 +76,41 @@ const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 //------------------------------------------------
 
+
+// --- CORS setup with correct origins whitelist ---
+const allowedOrigins = [
+  "https://ypropel-frontend.onrender.com",
+  "https://www.ypropel.com",
+];
+
+const corsOptions = {
+  origin: function (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) {
+    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      callback(new Error("Not allowed by CORS"));
+    }
+  },
+  credentials: true,
+};
+
+const app = express();
+
+app.use(cors(corsOptions));
+//app.use(express.json());
+
+app.use((req, res, next) => {
+ const fullUrl = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
+  console.log(`${req.method} ${fullUrl}`);
+  if (req.originalUrl === "/webhooks/stripe") {
+    next(); // Skip JSON parsing for Stripe webhook
+  } else {
+    express.json()(req, res, next); // Parse JSON for all other routes
+  }
+  
+});
+
+
 //-------send digest triggered automatically - Corn job on render
 async function sendJobDigestToAllUsers(limit: number = 10) {
   const usersRes = await query(
@@ -201,39 +236,6 @@ app.post(
   })
 );
 //------------------- End of Corn trigger route for job digest--------------------------------------
-
-// --- CORS setup with correct origins whitelist ---
-const allowedOrigins = [
-  "https://ypropel-frontend.onrender.com",
-  "https://www.ypropel.com",
-];
-
-const corsOptions = {
-  origin: function (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) {
-    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
-      callback(null, true);
-    } else {
-      callback(new Error("Not allowed by CORS"));
-    }
-  },
-  credentials: true,
-};
-
-const app = express();
-
-app.use(cors(corsOptions));
-//app.use(express.json());
-
-app.use((req, res, next) => {
- const fullUrl = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
-  console.log(`${req.method} ${fullUrl}`);
-  if (req.originalUrl === "/webhooks/stripe") {
-    next(); // Skip JSON parsing for Stripe webhook
-  } else {
-    express.json()(req, res, next); // Parse JSON for all other routes
-  }
-  
-});
 
 
 app.use("/admin", adminRoutes); //--adminbackendroute

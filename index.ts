@@ -634,9 +634,9 @@ app.post(
 async function sendJobDigestToAllUsers(limit: number = 10) {
   const usersRes = await query(
     `
-    SELECT id, email, name, email_unsubscribed
-    FROM users
-    WHERE email_unsubscribed = FALSE
+   SELECT id, email, job_alert_unsubscribed
+  FROM users
+  WHERE id = 13
     `
   );
 
